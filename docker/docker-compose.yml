@@ -1,0 +1,18 @@
+services:
+  trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../configs:/app/configs
+      - ../checkpoints:/app/checkpoints
+      - ../data:/app/data
+    env_file:
+      - ../.env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
