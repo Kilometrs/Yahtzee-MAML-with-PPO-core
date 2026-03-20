@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yahtzee-maml"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/env",
+    "src/agents",
+    "src/meta",
+    "src/tasks",
+    "src/training",
+    "src/logging_utils",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.hatch.envs.default]
+dependencies = []
