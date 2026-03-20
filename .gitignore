@@ -1,6 +1,9 @@
 # Model checkpoints
 checkpoints/
 
+# Generated training/evaluation data
+data/
+
 # Environment variables
 .env
 
