@@ -1,0 +1,19 @@
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+
+WORKDIR /app
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Pin UV to the conda-managed Python in this base image.
+ENV UV_PYTHON=/opt/conda/bin/python
+
+# Copy dependency manifest and lockfile.
+COPY pyproject.toml uv.lock ./
+
+# Install runtime + dev deps; skip project package (src/ is bind-mounted at runtime).
+# --group dev: includes the [dependency-groups] dev entries.
+# --no-install-project: src/ is not available at image build time.
+RUN uv sync --system --frozen --group dev --no-install-project
+
+# No ENTRYPOINT — devcontainer shell / VS Code task runner controls execution.
+# No COPY of src/ — the live workspace is bind-mounted to /app at runtime.
