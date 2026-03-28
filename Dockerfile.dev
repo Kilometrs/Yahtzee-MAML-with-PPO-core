@@ -1,0 +1,19 @@
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV UV_SYSTEM_PYTHON=1 \
+    PATH=/opt/conda/bin:$PATH
+
+COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen --group dev --no-install-project
+
+# Create non-root user; VS Code connects as this user via remoteUser in devcontainer.json.
+# Do not switch USER here — the container runs as root so uv/pip installs during build work,
+# and the Dev Containers extension su's to vscode at runtime.
+RUN useradd -m -s /bin/bash vscode && mkdir -p /home/vscode/.vscode-server && chown -R vscode:vscode /home/vscode/.vscode-server
