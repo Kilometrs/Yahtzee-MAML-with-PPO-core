@@ -2,7 +2,7 @@
   "name": "Yahtzee MAML Dev",
   "build": {
     "context": "..",
-    "dockerfile": "../docker/Dockerfile.dev"
+    "dockerfile": "../Dockerfile.dev"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached",
   "workspaceFolder": "/app",
@@ -10,9 +10,20 @@
   "hostRequirements": {
     "gpu": true
   },
-  "postCreateCommand": "UV_SYSTEM_PYTHON=1 uv sync --group dev",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "uv sync --frozen --group dev && [ -f .devcontainer/local-setup.sh ] && bash .devcontainer/local-setup.sh || true",
+  "containerEnv": {
+    "PYTHONPATH": "/app/src"
+  },
   "customizations": {
     "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/bin/python"
+      },
       "extensions": [
         "ms-python.python",
         "ms-python.vscode-pylance",
