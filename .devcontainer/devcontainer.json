@@ -15,7 +15,7 @@
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
   ],
-  "postCreateCommand": "uv sync --frozen --group dev && [ -f .devcontainer/local-setup.sh ] && bash .devcontainer/local-setup.sh || true",
+  "postCreateCommand": "uv sync --frozen --group dev && { [ ! -f .devcontainer/local-setup.sh ] || bash .devcontainer/local-setup.sh; }",
   "containerEnv": {
     "PYTHONPATH": "/app/src"
   },
