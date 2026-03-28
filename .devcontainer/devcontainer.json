@@ -1,0 +1,26 @@
+{
+  "name": "Yahtzee MAML Dev",
+  "build": {
+    "context": "..",
+    "dockerfile": "docker/Dockerfile.dev"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached",
+  "workspaceFolder": "/app",
+  "runArgs": ["--gpus", "all"],
+  "hostRequirements": {
+    "gpu": true
+  },
+  "postCreateCommand": "uv sync --system --group dev",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "nvidia.nsight-vscode-edition",
+        "charliermarsh.ruff",
+        "eamodio.gitlens"
+      ]
+    }
+  }
+}
