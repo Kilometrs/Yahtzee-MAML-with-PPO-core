@@ -16,12 +16,12 @@ COPY pyproject.toml uv.lock ./
 # Install all runtime dependencies from the lockfile.
 # --no-install-project: skip building the local package (src/ not copied yet).
 # --frozen: never re-resolve; use uv.lock exactly as committed.
-RUN uv sync --system --frozen --no-install-project
+RUN uv sync --system --frozen --no-install-project --no-dev
 
 # Copy source and install the project package.
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-RUN uv sync --system --frozen
+RUN uv sync --system --frozen --no-dev
 
 VOLUME ["/app/configs", "/app/checkpoints", "/app/data"]
 
