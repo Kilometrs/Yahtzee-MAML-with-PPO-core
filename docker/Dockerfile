@@ -7,7 +7,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Pin UV to the conda-managed Python in this base image.
 # pytorch/pytorch uses conda; UV_PYTHON ensures uv targets the correct interpreter
 # rather than relying on PATH resolution, which may change across base image updates.
-ENV UV_PYTHON=/opt/conda/bin/python
+ENV UV_PYTHON=/opt/conda/bin/python \
+    UV_SYSTEM_PYTHON=1
 
 # Copy dependency manifest and lockfile first (layer cache optimisation).
 # Changing src/ will not invalidate this layer.
@@ -16,12 +17,12 @@ COPY pyproject.toml uv.lock ./
 # Install all runtime dependencies from the lockfile.
 # --no-install-project: skip building the local package (src/ not copied yet).
 # --frozen: never re-resolve; use uv.lock exactly as committed.
-RUN uv sync --system --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy source and install the project package.
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-RUN uv sync --system --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 VOLUME ["/app/configs", "/app/checkpoints", "/app/data"]
 

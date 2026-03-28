@@ -10,7 +10,7 @@
   "hostRequirements": {
     "gpu": true
   },
-  "postCreateCommand": "uv sync --system --group dev",
+  "postCreateCommand": "UV_SYSTEM_PYTHON=1 uv sync --group dev",
   "customizations": {
     "vscode": {
       "extensions": [
