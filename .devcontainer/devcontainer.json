@@ -2,7 +2,7 @@
   "name": "Yahtzee MAML Dev",
   "build": {
     "context": "..",
-    "dockerfile": "docker/Dockerfile.dev"
+    "dockerfile": "../docker/Dockerfile.dev"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached",
   "workspaceFolder": "/app",
