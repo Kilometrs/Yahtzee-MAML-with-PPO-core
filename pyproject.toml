@@ -30,9 +30,6 @@ packages = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 
-[tool.hatch.envs.default]
-dependencies = []
-
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
