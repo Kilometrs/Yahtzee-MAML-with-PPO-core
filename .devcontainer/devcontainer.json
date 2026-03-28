@@ -13,9 +13,10 @@
   "remoteUser": "vscode",
   "updateRemoteUserUID": true,
   "mounts": [
-    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.vscode-server/extensions,target=/home/vscode/.vscode-server/extensions,type=bind,consistency=cached"
   ],
-  "postCreateCommand": "uv sync --frozen --group dev && { [ ! -f .devcontainer/local-setup.sh ] || bash .devcontainer/local-setup.sh; }",
+  "postCreateCommand": "uv sync --frozen --group dev",
   "containerEnv": {
     "PYTHONPATH": "/app/src"
   },
