@@ -6,18 +6,23 @@ WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Use conda Python and install the venv at /opt/venv (outside /app).
-# /app is bind-mounted at runtime, so anything under /app would be wiped.
-# /opt/venv survives the bind mount — packages are ready immediately on start.
-ENV UV_PYTHON=/opt/conda/bin/python \
-    VIRTUAL_ENV=/opt/venv \
+# Install the venv at /opt/venv (outside /app).
+# /app is bind-mounted at runtime, so anything under /app is wiped on start.
+# /opt/venv survives the bind mount — packages are ready immediately, no downloads needed.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH=/opt/venv/bin:/opt/conda/bin:$PATH
 
+# Pre-install dependencies only (not the local project).
+# postCreateCommand installs the local editable package at runtime from the bind-mounted /app.
 COPY pyproject.toml uv.lock ./
-RUN uv venv /opt/venv && uv sync --frozen --group dev --no-install-project
+RUN uv venv /opt/venv --python /opt/conda/bin/python \
+    && uv sync --frozen --group dev --no-install-project
 
-# Create non-root user and grant write access to the venv so postCreateCommand
-# can install the local project package (uv sync without --no-install-project).
+# Only site-packages needs to be writable by the remapped vscode UID at runtime.
+# updateRemoteUserUID remaps vscode's UID to match the host — chown-based ownership breaks,
+# so we open just the one directory that postCreateCommand writes to.
+RUN chmod a+rwx /opt/venv/lib/python3.10/site-packages
+
 RUN useradd -m -s /bin/bash vscode \
     && mkdir -p /home/vscode/.vscode-server \
-    && chown -R vscode:vscode /home/vscode/.vscode-server /opt/venv
+    && chown -R vscode:vscode /home/vscode/.vscode-server

@@ -1,14 +1,15 @@
 services:
   trainer:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     volumes:
-      - ../configs:/app/configs
-      - ../checkpoints:/app/checkpoints
-      - ../data:/app/data
+      - ./configs:/app/configs
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
     env_file:
-      - ../.env
+      - path: .env
+        required: false
     deploy:
       resources:
         reservations:

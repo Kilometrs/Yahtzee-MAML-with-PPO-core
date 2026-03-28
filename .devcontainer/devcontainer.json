@@ -16,14 +16,14 @@
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.vscode-server/extensions,target=/home/vscode/.vscode-server/extensions,type=bind,consistency=cached"
   ],
-  "postCreateCommand": "uv sync --frozen --group dev",
+  "postCreateCommand": "uv sync --frozen --group dev && uv python install",
   "containerEnv": {
     "PYTHONPATH": "/app/src"
   },
   "customizations": {
     "vscode": {
       "settings": {
-        "python.defaultInterpreterPath": "/opt/conda/bin/python"
+        "python.defaultInterpreterPath": "/opt/venv/bin/python"
       },
       "extensions": [
         "ms-python.python",
