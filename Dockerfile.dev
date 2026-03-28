@@ -6,14 +6,18 @@ WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-ENV UV_SYSTEM_PYTHON=1 \
-    PATH=/opt/conda/bin:$PATH
+# Use conda Python and install the venv at /opt/venv (outside /app).
+# /app is bind-mounted at runtime, so anything under /app would be wiped.
+# /opt/venv survives the bind mount — packages are ready immediately on start.
+ENV UV_PYTHON=/opt/conda/bin/python \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:/opt/conda/bin:$PATH
 
 COPY pyproject.toml uv.lock ./
+RUN uv venv /opt/venv && uv sync --frozen --group dev --no-install-project
 
-RUN uv sync --frozen --group dev --no-install-project
-
-# Create non-root user; VS Code connects as this user via remoteUser in devcontainer.json.
-# Do not switch USER here — the container runs as root so uv/pip installs during build work,
-# and the Dev Containers extension su's to vscode at runtime.
-RUN useradd -m -s /bin/bash vscode && mkdir -p /home/vscode/.vscode-server && chown -R vscode:vscode /home/vscode/.vscode-server
+# Create non-root user and grant write access to the venv so postCreateCommand
+# can install the local project package (uv sync without --no-install-project).
+RUN useradd -m -s /bin/bash vscode \
+    && mkdir -p /home/vscode/.vscode-server \
+    && chown -R vscode:vscode /home/vscode/.vscode-server /opt/venv
