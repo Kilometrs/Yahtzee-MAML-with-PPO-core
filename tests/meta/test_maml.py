@@ -103,3 +103,29 @@ def test_inner_update_does_not_mutate_model():
     )
     assert torch.allclose(next(iter(model.parameters())), original_model_param), \
         "inner_update must not modify the original model parameters"
+
+
+def test_meta_update_returns_finite_scalar():
+    torch.manual_seed(0)
+    model = ActorCritic(obs_dim=85, n_columns=3)
+    maml = FOMAML(model, inner_lr=0.01, outer_lr=0.0003, n_inner_steps=1)
+    tasks = [MaxScore()]
+    env_fn = lambda: YahtzeeEnv(n_columns=3)
+    ppo_cfg = dict(clip_epsilon=0.2, entropy_coef=0.01, value_loss_coef=0.5, gae_lambda=0.95)
+    result = maml.meta_update(tasks, env_fn, ppo_cfg, torch.device("cpu"))
+    assert isinstance(result, float)
+    assert math.isfinite(result)
+
+
+def test_meta_update_changes_model_params():
+    torch.manual_seed(0)
+    model = ActorCritic(obs_dim=85, n_columns=3)
+    maml = FOMAML(model, inner_lr=0.01, outer_lr=0.0003, n_inner_steps=1)
+    original = {k: v.clone() for k, v in model.named_parameters()}
+    tasks = [MaxScore()]
+    env_fn = lambda: YahtzeeEnv(n_columns=3)
+    ppo_cfg = dict(clip_epsilon=0.2, entropy_coef=0.01, value_loss_coef=0.5, gae_lambda=0.95)
+    maml.meta_update(tasks, env_fn, ppo_cfg, torch.device("cpu"))
+    changed = [k for k, v in model.named_parameters()
+               if not torch.allclose(v, original[k])]
+    assert len(changed) > 0, "meta_update must change at least one meta-parameter"
