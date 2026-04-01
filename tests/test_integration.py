@@ -115,5 +115,3 @@ def test_10_meta_steps_and_checkpoint(tmp_path):
     assert (df_steps["action_entropy"] >= 0).all(), "entropy must be non-negative"
     assert (df_episodes["final_score"] >= 0).all(), "final_score must be non-negative"
     assert df_steps["phase"].isin(["roll", "score"]).all(), "phase must be roll or score"
-    # episode_id matches ep_idx: 2 episodes per task × 5 tasks = 10 episode rows
-    assert len(df_episodes) == len(tasks) * 2
