@@ -136,6 +136,11 @@ class FOMAML:
 
             # FOMAML: treat gradient at adapted params as meta-gradient
             # (first-order approximation — no differentiation through inner update)
+            # Guard: _ppo_loss_fn returns a leaf tensor with no grad_fn when
+            # total_count == 0 (empty rollout). In that case, skip gradient
+            # accumulation for this task; it still counts in len(tasks) so the
+            # meta-gradient is diluted — but empty Yahtzee episodes cannot occur
+            # in practice (every game produces at least one scoring step).
             if query_loss.grad_fn is not None:
                 task_grads = torch.autograd.grad(
                     query_loss,
