@@ -85,3 +85,35 @@ def test_10_meta_steps_and_checkpoint(tmp_path):
     assert len(df_episodes) == len(tasks) * 2
     assert "strategy" in df_episodes.columns
     assert "meta_step" in df_episodes.columns
+
+    # --- Per-step schema ---
+    EXPECTED_STEP_COLS = {
+        "episode_id", "strategy", "meta_step", "turn", "round", "phase",
+        "rerolls_remaining", "dice_1", "dice_2", "dice_3", "dice_4", "dice_5",
+        "dice_kept_mask", "action_category", "action_column", "score_gained",
+        "cumulative_score", "upper_section_total", "upper_bonus_achieved",
+        "value_estimate", "action_entropy", "action_probs_top3",
+        "cross_out", "yahtzee_bonus_triggered", "n_columns_completed",
+    }
+    missing_step = EXPECTED_STEP_COLS - set(df_steps.columns)
+    assert not missing_step, f"Missing step columns: {missing_step}"
+
+    # --- Per-episode schema ---
+    EXPECTED_EPISODE_COLS = {
+        "episode_id", "strategy", "meta_step", "final_score",
+        "upper_section_score", "lower_section_score", "upper_bonus_total",
+        "yahtzee_bonus_total", "n_yahtzees_scored", "n_cross_outs",
+        "n_zeros", "n_turns", "beat_threshold_250",
+    }
+    missing_ep = EXPECTED_EPISODE_COLS - set(df_episodes.columns)
+    assert not missing_ep, f"Missing episode columns: {missing_ep}"
+
+    # --- Sanity checks on values ---
+    assert df_steps["dice_1"].between(1, 6).all(), "dice_1 out of range"
+    assert df_steps["dice_5"].between(1, 6).all(), "dice_5 out of range"
+    assert (df_steps["rerolls_remaining"].between(0, 2)).all(), "rerolls_remaining out of range"
+    assert (df_steps["action_entropy"] >= 0).all(), "entropy must be non-negative"
+    assert (df_episodes["final_score"] >= 0).all(), "final_score must be non-negative"
+    assert df_steps["phase"].isin(["roll", "score"]).all(), "phase must be roll or score"
+    # episode_id matches ep_idx: 2 episodes per task × 5 tasks = 10 episode rows
+    assert len(df_episodes) == len(tasks) * 2
