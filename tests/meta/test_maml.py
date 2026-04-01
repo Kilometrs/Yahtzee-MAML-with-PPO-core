@@ -49,3 +49,57 @@ def test_collect_episode_param_swap_restores_model():
     restored_val = next(iter(model.parameters()))
     assert torch.allclose(restored_val, original_val), \
         "Model params not restored after collect_episode with params"
+
+
+def test_inner_update_changes_fast_params():
+    torch.manual_seed(0)
+    model = ActorCritic(obs_dim=85, n_columns=3)
+    env = YahtzeeEnv(n_columns=3)
+    buf = collect_episode(model, env, torch.device("cpu"))
+    adv, ret = compute_gae(buf, gae_lambda=0.95)
+    adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()
+    ret = ret.detach()
+    data = buf.get()
+    fast_params = clone_params(model)
+    original = {k: v.clone() for k, v in fast_params.items()}
+    updated = inner_update(
+        model=model,
+        fast_params=fast_params,
+        obs=torch.tensor(data["obs"]),
+        actions=data["actions"],
+        advantages=adv,
+        returns=ret,
+        log_probs_old=torch.tensor(data["log_probs"]),
+        phases=data["phases"],
+        action_masks=data["action_masks"],
+        inner_lr=0.01,
+    )
+    changed = [k for k in updated if not torch.allclose(updated[k], original[k])]
+    assert len(changed) > 0, "inner_update must change at least one parameter"
+
+
+def test_inner_update_does_not_mutate_model():
+    torch.manual_seed(0)
+    model = ActorCritic(obs_dim=85, n_columns=3)
+    env = YahtzeeEnv(n_columns=3)
+    buf = collect_episode(model, env, torch.device("cpu"))
+    adv, ret = compute_gae(buf, gae_lambda=0.95)
+    adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()
+    ret = ret.detach()
+    data = buf.get()
+    original_model_param = next(iter(model.parameters())).clone()
+    fast_params = clone_params(model)
+    inner_update(
+        model=model,
+        fast_params=fast_params,
+        obs=torch.tensor(data["obs"]),
+        actions=data["actions"],
+        advantages=adv,
+        returns=ret,
+        log_probs_old=torch.tensor(data["log_probs"]),
+        phases=data["phases"],
+        action_masks=data["action_masks"],
+        inner_lr=0.01,
+    )
+    assert torch.allclose(next(iter(model.parameters())), original_model_param), \
+        "inner_update must not modify the original model parameters"

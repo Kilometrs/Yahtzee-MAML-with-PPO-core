@@ -12,9 +12,11 @@ FOMAML inner loop pattern:
     3. Return fast_params (used by outer loop for meta-gradient)
 """
 
+import numpy as np
 import torch
-from torch.func import functional_call
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.func import functional_call
 from agents.actor_critic import ActorCritic
 from agents.rollout_buffer import RolloutBuffer
 
@@ -100,17 +102,146 @@ def collect_episode(
             model.load_state_dict(original_state)
 
 
+def _ppo_loss_fn(
+    model: nn.Module,
+    fast_params: dict[str, torch.Tensor],
+    obs: torch.Tensor,
+    actions,
+    advantages: torch.Tensor,
+    returns: torch.Tensor,
+    log_probs_old: torch.Tensor,
+    phases,
+    action_masks,
+    clip_epsilon: float,
+    entropy_coef: float,
+    value_loss_coef: float,
+) -> torch.Tensor:
+    """Compute PPO-style loss using functional_call with fast_params.
+
+    Processes both roll and score phases separately, sums losses, normalises
+    by total step count. Used by inner_update and FOMAML.meta_update.
+    Does not modify model weights — all forward passes are via functional_call.
+
+    Returns:
+        Scalar loss tensor with grad_fn attached to fast_params.
+    """
+    total_loss = torch.tensor(0.0)
+    total_count = 0
+
+    for phase_str in ("roll", "score"):
+        pmask_np = phases == phase_str
+        if not pmask_np.any():
+            continue
+        pmask = torch.from_numpy(pmask_np)
+
+        p_obs = obs[pmask]
+        p_adv = advantages[pmask]
+        p_returns = returns[pmask]
+        p_old_lp = log_probs_old[pmask]
+        p_actions = actions[pmask_np]
+        p_masks_np = action_masks[pmask_np]
+
+        # Forward pass with injected fast_params — does not modify model weights
+        logits, values_pred = functional_call(model, fast_params, (p_obs, phase_str))
+
+        mask_tensor = torch.tensor(
+            np.array(list(p_masks_np), dtype=np.float32),
+            dtype=torch.float32,
+        )
+        logits = logits.masked_fill(mask_tensor == 0, float("-inf"))
+        dist = torch.distributions.Categorical(logits=logits)
+
+        if phase_str == "score":
+            acts_np = np.array(list(p_actions))   # shape (N, 2)
+            flat = acts_np[:, 0] * model.n_columns + acts_np[:, 1]
+            act_tensor = torch.tensor(flat, dtype=torch.long)
+        else:
+            act_tensor = torch.tensor(list(p_actions), dtype=torch.long)
+
+        new_lp = dist.log_prob(act_tensor)
+        entropy = dist.entropy()
+
+        ratio = torch.exp(new_lp - p_old_lp)
+        clip_adv = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * p_adv
+        policy_loss = -torch.min(ratio * p_adv, clip_adv).sum()
+        value_loss = 0.5 * F.mse_loss(
+            values_pred.squeeze(-1), p_returns, reduction="sum"
+        )
+        entropy_loss = -entropy_coef * entropy.sum()
+
+        total_loss = (
+            total_loss
+            + policy_loss
+            + value_loss_coef * value_loss
+            + entropy_loss
+        )
+        total_count += int(pmask_np.sum())
+
+    if total_count == 0:
+        return torch.tensor(0.0)
+
+    return total_loss / total_count
+
+
 def inner_update(
     model: nn.Module,
     fast_params: dict[str, torch.Tensor],
     obs: torch.Tensor,
-    actions: torch.Tensor,
+    actions,
     advantages: torch.Tensor,
+    returns: torch.Tensor,
     log_probs_old: torch.Tensor,
-    phases: list[str],
+    phases,
+    action_masks,
     inner_lr: float,
     clip_epsilon: float = 0.2,
     entropy_coef: float = 0.01,
+    value_loss_coef: float = 0.5,
 ) -> dict[str, torch.Tensor]:
-    """Perform one FOMAML inner loop gradient step. Phase 2."""
-    raise NotImplementedError("Phase 2")
+    """Perform one FOMAML inner loop gradient step.
+
+    Computes PPO-style loss via functional_call (no model mutation),
+    takes gradient w.r.t. fast_params, returns updated fast_params dict.
+    create_graph=False — FOMAML does not differentiate through the inner update.
+
+    Args:
+        model: The meta-policy ActorCritic (used as a structure template only).
+        fast_params: Current task-adapted parameters (requires_grad=True).
+        obs: Observations tensor (T, obs_dim).
+        actions: Numpy object array of actions (int or np.array([cat, col])).
+        advantages: GAE advantages (T,), already normalised and detached.
+        returns: GAE returns (T,), detached.
+        log_probs_old: Log-probs from rollout collection (T,).
+        phases: Numpy object array of "roll"/"score" strings.
+        action_masks: Numpy object array of float32 mask arrays.
+        inner_lr: Step size for the gradient update.
+        clip_epsilon: PPO clipping epsilon.
+        entropy_coef: Entropy bonus coefficient.
+        value_loss_coef: Value loss coefficient.
+
+    Returns:
+        Updated fast_params dict with same keys as input.
+    """
+    loss = _ppo_loss_fn(
+        model, fast_params, obs, actions, advantages, returns,
+        log_probs_old, phases, action_masks,
+        clip_epsilon, entropy_coef, value_loss_coef,
+    )
+
+    if loss.item() == 0.0:
+        return fast_params
+
+    grads = torch.autograd.grad(
+        loss,
+        list(fast_params.values()),
+        create_graph=False,
+        allow_unused=True,
+    )
+    grads = [
+        g if g is not None else torch.zeros_like(v)
+        for g, v in zip(grads, fast_params.values())
+    ]
+    return {
+        k: v - inner_lr * g
+        for (k, v), g in zip(fast_params.items(), grads)
+    }
