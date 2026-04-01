@@ -1,17 +1,22 @@
-import math
+import math  # used by meta_update tests (Task 4)
 import torch
 from agents.actor_critic import ActorCritic
-from agents.ppo import compute_gae
+from agents.ppo import compute_gae  # used by inner_update tests (Task 3)
 from env.yahtzee_env import YahtzeeEnv
 from meta.inner_loop import clone_params, inner_update, collect_episode
 from meta.maml import FOMAML
-from tasks.reward_tasks import MaxScore
+from tasks.reward_tasks import MaxScore  # used by meta_update tests (Task 4)
 
 
-def test_clone_params_is_callable():
+def test_clone_params_returns_grad_tensors():
     model = ActorCritic(obs_dim=85, n_columns=3)
     result = clone_params(model)
-    assert result is None or isinstance(result, dict)
+    assert isinstance(result, dict)
+    assert len(result) > 0
+    assert all(v.requires_grad for v in result.values())
+    # Values are clones, not references to original params
+    original = dict(model.named_parameters())
+    assert all(not result[k].data_ptr() == original[k].data_ptr() for k in result)
 
 
 def test_fomaml_instantiates():

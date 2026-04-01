@@ -15,7 +15,6 @@ FOMAML inner loop pattern:
 import torch
 from torch.func import functional_call
 import torch.nn as nn
-import numpy as np
 from agents.actor_critic import ActorCritic
 from agents.rollout_buffer import RolloutBuffer
 
