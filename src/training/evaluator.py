@@ -9,6 +9,7 @@ import torch
 
 from agents.actor_critic import ActorCritic
 from agents.ppo import compute_gae
+from env.constants import YAHTZEE
 from env.yahtzee_env import YahtzeeEnv
 from meta.inner_loop import clone_params, collect_episode, inner_update
 from tasks.reward_tasks import TASK_REGISTRY
@@ -20,21 +21,22 @@ class Evaluator:
     For each task:
     1. Load meta-policy from checkpoint
     2. Fine-tune for M inner loop steps on the task
-    3. Run N evaluation episodes, collecting full per-step trajectory data
+    3. Run N evaluation episodes via _collect_episode_eval
     4. Save trajectory and episode summary as parquet files
-    5. Upload to ClearML as artifacts
 
-    Trajectory parquet schema (per-step):
-        episode (int), round (int), rerolls_left (int), dice (list[int]),
-        phase (str), action_category (int), action_column (int),
-        score_gained (int), value_estimate (float), entropy (float),
-        action_probs (list[float]), cross_out (bool), yahtzee_bonus_event (bool),
-        cumulative_score (int), strategy (str), meta_step (int)
+    Per-step trajectory schema (25 fields):
+        episode_id, strategy, meta_step, turn, round, phase,
+        rerolls_remaining, dice_1-5, dice_kept_mask,
+        action_category, action_column, score_gained, cumulative_score,
+        upper_section_total, upper_bonus_achieved,
+        value_estimate, action_entropy, action_probs_top3,
+        cross_out, yahtzee_bonus_triggered, n_columns_completed
 
-    Episode summary parquet schema:
-        episode (int), final_score (int), n_cross_outs (int),
-        n_yahtzees (int), yahtzee_bonus_total (int),
-        upper_bonus_earned (bool), strategy (str), meta_step (int)
+    Per-episode summary schema (13 fields):
+        episode_id, strategy, meta_step, final_score,
+        upper_section_score, lower_section_score, upper_bonus_total,
+        yahtzee_bonus_total, n_yahtzees_scored, n_cross_outs,
+        n_zeros, n_turns, beat_threshold_250
     """
 
     def __init__(self, config: dict):
@@ -226,7 +228,7 @@ class Evaluator:
         # YAHTZEE is category index 11 (src/env/constants.py); a Yahtzee scores exactly 50
         n_yahtzees_scored = sum(
             1 for r in score_steps
-            if r["action_category"] == 11 and r["score_gained"] == 50
+            if r["action_category"] == YAHTZEE and r["score_gained"] == 50
         )
         n_zeros = sum(1 for r in score_steps if r["score_gained"] == 0)
 
