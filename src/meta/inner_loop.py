@@ -125,7 +125,7 @@ def _ppo_loss_fn(
     Returns:
         Scalar loss tensor with grad_fn attached to fast_params.
     """
-    total_loss = torch.tensor(0.0)
+    loss_terms = []
     total_count = 0
 
     for phase_str in ("roll", "score"):
@@ -147,16 +147,16 @@ def _ppo_loss_fn(
         mask_tensor = torch.tensor(
             np.array(list(p_masks_np), dtype=np.float32),
             dtype=torch.float32,
-        )
+        ).to(obs.device)
         logits = logits.masked_fill(mask_tensor == 0, float("-inf"))
         dist = torch.distributions.Categorical(logits=logits)
 
         if phase_str == "score":
             acts_np = np.array(list(p_actions))   # shape (N, 2)
             flat = acts_np[:, 0] * model.n_columns + acts_np[:, 1]
-            act_tensor = torch.tensor(flat, dtype=torch.long)
+            act_tensor = torch.tensor(flat, dtype=torch.long).to(obs.device)
         else:
-            act_tensor = torch.tensor(list(p_actions), dtype=torch.long)
+            act_tensor = torch.tensor(list(p_actions), dtype=torch.long).to(obs.device)
 
         new_lp = dist.log_prob(act_tensor)
         entropy = dist.entropy()
@@ -169,18 +169,13 @@ def _ppo_loss_fn(
         )
         entropy_loss = -entropy_coef * entropy.sum()
 
-        total_loss = (
-            total_loss
-            + policy_loss
-            + value_loss_coef * value_loss
-            + entropy_loss
-        )
+        loss_terms.append(policy_loss + value_loss_coef * value_loss + entropy_loss)
         total_count += int(pmask_np.sum())
 
     if total_count == 0:
         return torch.tensor(0.0)
 
-    return total_loss / total_count
+    return torch.stack(loss_terms).sum() / total_count
 
 
 def inner_update(
@@ -228,7 +223,7 @@ def inner_update(
         clip_epsilon, entropy_coef, value_loss_coef,
     )
 
-    if loss.item() == 0.0:
+    if loss.grad_fn is None:
         return fast_params
 
     grads = torch.autograd.grad(
