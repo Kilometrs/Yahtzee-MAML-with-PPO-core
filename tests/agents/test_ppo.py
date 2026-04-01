@@ -38,3 +38,11 @@ def test_module_level_compute_gae_returns_advantages_and_returns():
     assert ret.shape == (2,)
     assert isinstance(adv, torch.Tensor)
     assert isinstance(ret, torch.Tensor)
+    # adv[1]: terminal step — advantage equals TD error only (done=True zeros future)
+    # delta = 2.0 + 0.99*0.0*(1-1) - 0.7 = 1.3; no last_adv propagation
+    assert torch.isclose(adv[1], torch.tensor(1.3), atol=1e-4)
+    # adv[0]: non-terminal — delta = 1.0 + 0.99*0.7*(1-0) - 0.9 = 0.793
+    # adv[0] = 0.793 + 0.99*0.95*(1-0)*1.3 = 0.793 + 1.22265 = 2.01565
+    assert torch.isclose(adv[0], torch.tensor(2.01565), atol=1e-3)
+    # returns = advantages + values
+    assert torch.allclose(ret, adv + torch.tensor([0.9, 0.7]))

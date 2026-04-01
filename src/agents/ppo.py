@@ -9,7 +9,7 @@ from agents.rollout_buffer import RolloutBuffer
 
 
 def compute_gae(
-    buffer: "RolloutBuffer",
+    buffer: RolloutBuffer,
     gae_lambda: float,
     gamma: float = 0.99,
 ) -> tuple[torch.Tensor, torch.Tensor]:
