@@ -1,9 +1,11 @@
 """Meta-training orchestration — outer FOMAML loop with checkpointing."""
 
 import random
+from datetime import datetime
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
 
 from agents.actor_critic import ActorCritic
 from env.yahtzee_env import YahtzeeEnv
@@ -61,11 +63,17 @@ class MetaTrainer:
         self.n_columns = n_columns
         self.meta_step = 0
 
+        timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M")
+        n_tasks = config["meta"]["n_tasks_per_batch"]
+        auto_task_name = f"{timestamp}_maml_{n_tasks}t"
+        task_name = config["clearml"].get("task_name") or auto_task_name
+
         self.logger = ClearMLLogger(
             project_name=config["clearml"]["project_name"],
-            task_name=config["clearml"]["task_name"],
+            task_name=task_name,
             config=config,
         )
+        self.checkpoint_dir = Path(config["training"]["checkpoint_dir"]) / self.logger.task_id
         self.evaluator = Evaluator(config)
 
     def _env_fn(self) -> YahtzeeEnv:
@@ -79,9 +87,10 @@ class MetaTrainer:
         checkpoint_every = cfg["training"]["checkpoint_every"]
         ppo_cfg = cfg["ppo"]
 
-        for step in range(self.meta_step, n_meta_steps):
+        pbar = tqdm(range(self.meta_step, n_meta_steps), initial=self.meta_step, total=n_meta_steps)
+        for step in pbar:
             task_batch = random.sample(self.tasks, min(n_tasks_per_batch, len(self.tasks)))
-            meta_loss = self.fomaml.meta_update(
+            meta_loss, per_task_losses = self.fomaml.meta_update(
                 tasks=task_batch,
                 env_fn=self._env_fn,
                 ppo_cfg=ppo_cfg,
@@ -89,7 +98,10 @@ class MetaTrainer:
             )
             self.meta_step = step + 1
 
+            pbar.set_postfix({"loss": f"{meta_loss:.4f}"})
             self.logger.log_scalar("Loss", "meta_loss", meta_loss, step)
+            for task_name, task_loss in per_task_losses.items():
+                self.logger.log_scalar("Loss/task", task_name, task_loss, step)
 
             if self.meta_step % checkpoint_every == 0:
                 ckpt_path = self.save_checkpoint(self.meta_step)
@@ -127,9 +139,8 @@ class MetaTrainer:
         Returns:
             Path to saved checkpoint file.
         """
-        ckpt_dir = Path(self.config["training"]["checkpoint_dir"])
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_path = ckpt_dir / f"{step}.pt"
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = self.checkpoint_dir / f"{step}.pt"
         torch.save(
             {
                 "meta_params": self.model.state_dict(),
