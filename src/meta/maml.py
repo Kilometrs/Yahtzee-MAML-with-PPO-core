@@ -51,7 +51,7 @@ class FOMAML:
         env_fn: Callable,
         ppo_cfg: dict,
         device: torch.device,
-    ) -> float:
+    ) -> tuple[float, dict[str, float]]:
         """Run one outer loop meta-update across a batch of tasks.
 
         For each task:
@@ -72,10 +72,11 @@ class FOMAML:
             device: Torch device.
 
         Returns:
-            meta_loss: Mean query loss across tasks (scalar float for logging).
+            (meta_loss, per_task_losses): Mean query loss and dict of task_name -> loss.
         """
         self.meta_optimizer.zero_grad()
         total_query_loss = 0.0
+        per_task_losses: dict[str, float] = {}
         gae_lambda = ppo_cfg["gae_lambda"]
         clip_epsilon = ppo_cfg["clip_epsilon"]
         entropy_coef = ppo_cfg["entropy_coef"]
@@ -88,8 +89,8 @@ class FOMAML:
             # --- Support rollout (meta-params) ---
             support_buf = collect_episode(self.model, env, device)
             adv_s, ret_s = compute_gae(support_buf, gae_lambda)
-            adv_s = ((adv_s - adv_s.mean()) / (adv_s.std() + 1e-8)).detach()
-            ret_s = ret_s.detach()
+            adv_s = ((adv_s - adv_s.mean()) / (adv_s.std() + 1e-8)).detach().to(device)
+            ret_s = ((ret_s - ret_s.mean()) / (ret_s.std() + 1e-8)).detach().to(device)
             sd = support_buf.get()
 
             # --- Inner loop adaptation ---
@@ -114,8 +115,8 @@ class FOMAML:
             # --- Query rollout (adapted fast_params via param-swap) ---
             query_buf = collect_episode(self.model, env, device, params=fast_params)
             adv_q, ret_q = compute_gae(query_buf, gae_lambda)
-            adv_q = ((adv_q - adv_q.mean()) / (adv_q.std() + 1e-8)).detach()
-            ret_q = ret_q.detach()
+            adv_q = ((adv_q - adv_q.mean()) / (adv_q.std() + 1e-8)).detach().to(device)
+            ret_q = ((ret_q - ret_q.mean()) / (ret_q.std() + 1e-8)).detach().to(device)
             qd = query_buf.get()
 
             # --- Meta-gradient: query loss at adapted params ---
@@ -159,7 +160,19 @@ class FOMAML:
                     else:
                         param.grad += grad.detach().clone() / len(tasks)
 
+            per_task_losses[task.name] = query_loss.item()
             total_query_loss += query_loss.item()
 
-        self.meta_optimizer.step()
-        return total_query_loss / len(tasks)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+        # Skip update if any gradient is NaN or Inf (numerical instability guard)
+        has_bad_grad = any(
+            p.grad is not None and not torch.isfinite(p.grad).all()
+            for p in self.model.parameters()
+        )
+        if not has_bad_grad:
+            self.meta_optimizer.step()
+        else:
+            self.meta_optimizer.zero_grad()
+
+        return total_query_loss / len(tasks), per_task_losses
