@@ -26,7 +26,7 @@ tasks:
 
 training:
   checkpoint_every: 5
-  checkpoint_dir: checkpoints/test/
+  checkpoint_dir: /mnt/checkpoints/test/
   device: cpu
 
 clearml:

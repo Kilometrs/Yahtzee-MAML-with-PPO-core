@@ -26,9 +26,9 @@ tasks:
 
 training:
   checkpoint_every: 500
-  checkpoint_dir: checkpoints/
+  checkpoint_dir: /mnt/checkpoints/
   device: cuda
 
 clearml:
-  project_name: yahtzee-maml
-  task_name: default-run
+  project_name: yahtzee-maml-default
+  task_name:  # auto-generated as YYYY_MM_DD_HH_MM_maml_<n_tasks>t if empty
