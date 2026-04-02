@@ -24,6 +24,10 @@ class ClearMLLogger:
         self._task = task
         self._logger = task.get_logger()
 
+    @property
+    def task_id(self) -> str:
+        return self._task.id
+
     def log_scalar(self, title: str, series: str, value: float, step: int) -> None:
         """Log a scalar value to ClearML.
 
