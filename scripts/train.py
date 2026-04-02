@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import os
 import random
 import sys
 from pathlib import Path
@@ -15,10 +16,28 @@ import numpy as np
 import torch
 import yaml
 
+
+def _load_dotenv(path: Path) -> None:
+    """Load key=value pairs from a .env file into os.environ (no overwrite)."""
+    if not path.exists():
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 def main():
+    _load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
     parser = argparse.ArgumentParser(description="Run FOMAML meta-training")
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument(
