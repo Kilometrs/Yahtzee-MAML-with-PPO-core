@@ -2,10 +2,13 @@
 
 import torch
 import torch.nn as nn
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 from typing import Callable
 
-from meta.inner_loop import clone_params, inner_update, collect_episode, _ppo_loss_fn
+from meta.inner_loop import clone_params, inner_update, collect_episode, collect_episode_cpu, _ppo_loss_fn
 from agents.ppo import compute_gae
+from agents.rollout_buffer import RolloutBuffer
 
 
 class FOMAML:
@@ -32,6 +35,7 @@ class FOMAML:
         inner_lr: float,
         outer_lr: float,
         n_inner_steps: int,
+        n_workers: int = 4,
     ):
         """
         Args:
@@ -39,10 +43,12 @@ class FOMAML:
             inner_lr: Learning rate for inner loop parameter updates.
             outer_lr: Learning rate for outer loop (Adam) meta-optimizer.
             n_inner_steps: Number of PPO steps per task in the inner loop.
+            n_workers: Worker processes for parallel episode collection.
         """
         self.model = model
         self.inner_lr = inner_lr
         self.n_inner_steps = n_inner_steps
+        self.n_workers = n_workers
         self.meta_optimizer = torch.optim.Adam(model.parameters(), lr=outer_lr)
 
     def meta_update(
@@ -82,18 +88,53 @@ class FOMAML:
         entropy_coef = ppo_cfg["entropy_coef"]
         value_loss_coef = ppo_cfg["value_loss_coef"]
 
-        for task in tasks:
-            env = env_fn()
-            env.reward_fn = task.reward  # inject task-specific reward
+        # Snapshot of meta-params on CPU — shared across all worker calls
+        cpu_state = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        model_kwargs = {
+            "obs_dim": self.model.obs_dim,
+            "n_columns": self.model.n_columns,
+            "hidden_dim": self.model.trunk[0].out_features,
+            "n_layers": len([m for m in self.model.trunk if isinstance(m, torch.nn.Linear)]),
+        }
 
-            # --- Support rollout (meta-params) ---
-            support_buf = collect_episode(self.model, env, device)
-            adv_s, ret_s = compute_gae(support_buf, gae_lambda)
+        n_columns = self.model.n_columns
+
+        _ctx = get_context("spawn") if self.n_workers > 1 else None
+
+        # --- Parallel support rollout collection (CPU workers) ---
+        if self.n_workers > 1:
+            with ProcessPoolExecutor(max_workers=min(self.n_workers, len(tasks)), mp_context=_ctx) as pool:
+                support_futs = [
+                    pool.submit(collect_episode_cpu, cpu_state, model_kwargs, task, n_columns)
+                    for task in tasks
+                ]
+                support_data = [f.result() for f in support_futs]
+        else:
+            support_data = [
+                collect_episode_cpu(cpu_state, model_kwargs, task, n_columns)
+                for task in tasks
+            ]
+
+        # --- Inner loop adaptation + query rollout collection ---
+        # Inner loop runs on GPU (fast); query collection parallelised on CPU
+        fast_params_list = []
+        for sd in support_data:
+            buf = RolloutBuffer()
+            for i in range(len(sd["obs"])):
+                buf.add(
+                    obs=sd["obs"][i],
+                    action=sd["actions"][i],
+                    reward=sd["rewards"][i],
+                    done=bool(sd["dones"][i]),
+                    log_prob=float(sd["log_probs"][i]),
+                    value=float(sd["values"][i]),
+                    phase=sd["phases"][i],
+                    action_mask=sd["action_masks"][i],
+                )
+            adv_s, ret_s = compute_gae(buf, gae_lambda)
             adv_s = ((adv_s - adv_s.mean()) / (adv_s.std() + 1e-8)).detach().to(device)
             ret_s = ((ret_s - ret_s.mean()) / (ret_s.std() + 1e-8)).detach().to(device)
-            sd = support_buf.get()
 
-            # --- Inner loop adaptation ---
             fast_params = clone_params(self.model)
             for _ in range(self.n_inner_steps):
                 fast_params = inner_update(
@@ -111,15 +152,48 @@ class FOMAML:
                     entropy_coef=entropy_coef,
                     value_loss_coef=value_loss_coef,
                 )
+            fast_params_list.append(fast_params)
 
-            # --- Query rollout (adapted fast_params via param-swap) ---
-            query_buf = collect_episode(self.model, env, device, params=fast_params)
-            adv_q, ret_q = compute_gae(query_buf, gae_lambda)
+        # --- Parallel query rollout collection (CPU workers, adapted params) ---
+        if self.n_workers > 1:
+            with ProcessPoolExecutor(max_workers=min(self.n_workers, len(tasks)), mp_context=_ctx) as pool:
+                query_futs = [
+                    pool.submit(
+                        collect_episode_cpu,
+                        cpu_state,
+                        model_kwargs,
+                        task,
+                        n_columns,
+                        {k: v.detach().cpu() for k, v in fp.items()},
+                    )
+                    for task, fp in zip(tasks, fast_params_list)
+                ]
+                query_data = [f.result() for f in query_futs]
+        else:
+            query_data = [
+                collect_episode_cpu(cpu_state, model_kwargs, task, n_columns,
+                                    {k: v.detach().cpu() for k, v in fp.items()})
+                for task, fp in zip(tasks, fast_params_list)
+            ]
+
+        # --- Meta-gradient computation (GPU) ---
+        for task, fast_params, qd in zip(tasks, fast_params_list, query_data):
+            qbuf = RolloutBuffer()
+            for i in range(len(qd["obs"])):
+                qbuf.add(
+                    obs=qd["obs"][i],
+                    action=qd["actions"][i],
+                    reward=qd["rewards"][i],
+                    done=bool(qd["dones"][i]),
+                    log_prob=float(qd["log_probs"][i]),
+                    value=float(qd["values"][i]),
+                    phase=qd["phases"][i],
+                    action_mask=qd["action_masks"][i],
+                )
+            adv_q, ret_q = compute_gae(qbuf, gae_lambda)
             adv_q = ((adv_q - adv_q.mean()) / (adv_q.std() + 1e-8)).detach().to(device)
             ret_q = ((ret_q - ret_q.mean()) / (ret_q.std() + 1e-8)).detach().to(device)
-            qd = query_buf.get()
 
-            # --- Meta-gradient: query loss at adapted params ---
             query_loss = _ppo_loss_fn(
                 model=self.model,
                 fast_params=fast_params,
@@ -135,13 +209,6 @@ class FOMAML:
                 value_loss_coef=value_loss_coef,
             )
 
-            # FOMAML: treat gradient at adapted params as meta-gradient
-            # (first-order approximation — no differentiation through inner update)
-            # Guard: _ppo_loss_fn returns a leaf tensor with no grad_fn when
-            # total_count == 0 (empty rollout). In that case, skip gradient
-            # accumulation for this task; it still counts in len(tasks) so the
-            # meta-gradient is diluted — but empty Yahtzee episodes cannot occur
-            # in practice (every game produces at least one scoring step).
             if query_loss.grad_fn is not None:
                 task_grads = torch.autograd.grad(
                     query_loss,
@@ -152,8 +219,6 @@ class FOMAML:
                     g if g is not None else torch.zeros_like(v)
                     for g, v in zip(task_grads, fast_params.values())
                 ]
-
-                # Accumulate onto meta_params.grad (divided by task count)
                 for param, grad in zip(self.model.parameters(), task_grads):
                     if param.grad is None:
                         param.grad = grad.detach().clone() / len(tasks)

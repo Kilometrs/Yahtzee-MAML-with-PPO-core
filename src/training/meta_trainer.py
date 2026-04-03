@@ -49,6 +49,7 @@ class MetaTrainer:
             inner_lr=config["meta"]["inner_lr"],
             outer_lr=config["meta"]["outer_lr"],
             n_inner_steps=config["meta"]["n_inner_steps"],
+            n_workers=config["meta"].get("n_workers", 4),
         )
 
         threshold = config["tasks"]["threshold_beater_score"]
