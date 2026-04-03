@@ -2,7 +2,7 @@ FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
 
 # Pin UV to the conda-managed Python in this base image.
 # pytorch/pytorch uses conda; UV_PYTHON ensures uv targets the correct interpreter
