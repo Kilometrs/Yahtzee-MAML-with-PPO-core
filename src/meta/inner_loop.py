@@ -21,6 +21,73 @@ from agents.actor_critic import ActorCritic
 from agents.rollout_buffer import RolloutBuffer
 
 
+def collect_episode_cpu(
+    model_state: dict,
+    model_kwargs: dict,
+    task,
+    n_columns: int,
+    fast_params_state: dict | None = None,
+) -> dict:
+    """Collect one episode entirely on CPU. Safe to call in a worker process.
+
+    Args:
+        model_state: state_dict of the meta-model (CPU tensors).
+        model_kwargs: kwargs to reconstruct ActorCritic (obs_dim, n_columns, etc).
+        task: BaseTask instance with a .reward method (picklable).
+        n_columns: Used to construct YahtzeeEnv inside the worker.
+        fast_params_state: If provided, load these weights instead of model_state
+                           (used for query rollout collection with adapted params).
+
+    Returns:
+        dict from RolloutBuffer.get() — plain numpy arrays, picklable.
+    """
+    from env.yahtzee_env import YahtzeeEnv
+
+    model = ActorCritic(**model_kwargs)
+    weights = fast_params_state if fast_params_state is not None else model_state
+    model.load_state_dict(weights)
+    model.eval()
+
+    cpu = torch.device("cpu")
+    buf = RolloutBuffer()
+    env = YahtzeeEnv(n_columns=n_columns)
+    env.reward_fn = task.reward
+    obs, info = env.reset()
+
+    while True:
+        phase = info["phase"]
+        mask = info["action_mask"]
+
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=cpu)
+        mask_t = torch.tensor(mask, dtype=torch.float32, device=cpu)
+
+        with torch.no_grad():
+            action, log_prob = model.get_action(obs_t, phase, mask_t)
+            value = model.get_value(obs_t)
+
+        next_obs, reward, terminated, truncated, next_info = env.step(action)
+        done = terminated or truncated
+
+        buf.add(
+            obs=obs,
+            action=action,
+            reward=reward,
+            done=done,
+            log_prob=log_prob.item(),
+            value=value.squeeze().item(),
+            phase=phase,
+            action_mask=mask,
+        )
+
+        if done:
+            break
+
+        obs = next_obs
+        info = next_info
+
+    return buf.get()
+
+
 def clone_params(model: nn.Module) -> dict[str, torch.Tensor]:
     """Return a cloned copy of all model parameters with requires_grad=True.
 
