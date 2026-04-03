@@ -236,6 +236,13 @@ def inner_update(
         g if g is not None else torch.zeros_like(v)
         for g, v in zip(grads, fast_params.values())
     ]
+
+    # Clip inner-loop gradients to prevent fast_params from exploding
+    total_norm = torch.sqrt(sum(g.norm() ** 2 for g in grads))
+    clip_coef = 1.0 / (total_norm + 1e-6)
+    if clip_coef < 1.0:
+        grads = [g * clip_coef for g in grads]
+
     return {
         k: v - inner_lr * g
         for (k, v), g in zip(fast_params.items(), grads)
