@@ -6,6 +6,8 @@ from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import get_context
 from typing import Callable
 
+
+
 from meta.inner_loop import clone_params, inner_update, collect_episode, collect_episode_cpu, _ppo_loss_fn
 from agents.ppo import compute_gae
 from agents.rollout_buffer import RolloutBuffer
@@ -50,6 +52,10 @@ class FOMAML:
         self.n_inner_steps = n_inner_steps
         self.n_workers = n_workers
         self.meta_optimizer = torch.optim.Adam(model.parameters(), lr=outer_lr)
+        if n_workers > 1:
+            self._pool = ProcessPoolExecutor(max_workers=n_workers, mp_context=get_context("spawn"))
+        else:
+            self._pool = None
 
     def meta_update(
         self,
@@ -99,16 +105,13 @@ class FOMAML:
 
         n_columns = self.model.n_columns
 
-        _ctx = get_context("spawn") if self.n_workers > 1 else None
-
         # --- Parallel support rollout collection (CPU workers) ---
-        if self.n_workers > 1:
-            with ProcessPoolExecutor(max_workers=min(self.n_workers, len(tasks)), mp_context=_ctx) as pool:
-                support_futs = [
-                    pool.submit(collect_episode_cpu, cpu_state, model_kwargs, task, n_columns)
-                    for task in tasks
-                ]
-                support_data = [f.result() for f in support_futs]
+        if self._pool is not None:
+            support_futs = [
+                self._pool.submit(collect_episode_cpu, cpu_state, model_kwargs, task, n_columns)
+                for task in tasks
+            ]
+            support_data = [f.result() for f in support_futs]
         else:
             support_data = [
                 collect_episode_cpu(cpu_state, model_kwargs, task, n_columns)
@@ -155,20 +158,19 @@ class FOMAML:
             fast_params_list.append(fast_params)
 
         # --- Parallel query rollout collection (CPU workers, adapted params) ---
-        if self.n_workers > 1:
-            with ProcessPoolExecutor(max_workers=min(self.n_workers, len(tasks)), mp_context=_ctx) as pool:
-                query_futs = [
-                    pool.submit(
-                        collect_episode_cpu,
-                        cpu_state,
-                        model_kwargs,
-                        task,
-                        n_columns,
-                        {k: v.detach().cpu() for k, v in fp.items()},
-                    )
-                    for task, fp in zip(tasks, fast_params_list)
-                ]
-                query_data = [f.result() for f in query_futs]
+        if self._pool is not None:
+            query_futs = [
+                self._pool.submit(
+                    collect_episode_cpu,
+                    cpu_state,
+                    model_kwargs,
+                    task,
+                    n_columns,
+                    {k: v.detach().cpu() for k, v in fp.items()},
+                )
+                for task, fp in zip(tasks, fast_params_list)
+            ]
+            query_data = [f.result() for f in query_futs]
         else:
             query_data = [
                 collect_episode_cpu(cpu_state, model_kwargs, task, n_columns,
