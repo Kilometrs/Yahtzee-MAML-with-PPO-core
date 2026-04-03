@@ -15,7 +15,7 @@ ppo:
   batch_size: 256
 
 meta:
-  inner_lr: 0.01
+  inner_lr: 0.001
   outer_lr: 0.0003
   n_inner_steps: 5
   n_tasks_per_batch: 5
@@ -25,7 +25,7 @@ tasks:
   threshold_beater_score: 250
 
 training:
-  checkpoint_every: 1000
+  checkpoint_every: 500
   checkpoint_dir: /mnt/checkpoints/
   device: cuda
 
