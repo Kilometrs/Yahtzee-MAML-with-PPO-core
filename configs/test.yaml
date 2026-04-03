@@ -20,6 +20,7 @@ meta:
   n_inner_steps: 1
   n_tasks_per_batch: 2
   n_meta_steps: 10
+  n_workers: 2
 
 tasks:
   threshold_beater_score: 250
