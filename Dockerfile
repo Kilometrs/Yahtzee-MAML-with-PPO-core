@@ -26,5 +26,5 @@ RUN uv sync --frozen --no-dev
 
 VOLUME ["/app/configs", "/app/checkpoints", "/app/data"]
 
-ENTRYPOINT ["python", "scripts/train.py"]
+ENTRYPOINT ["uv", "run", "python", "scripts/train.py"]
 CMD ["--config", "configs/server.yaml"]
