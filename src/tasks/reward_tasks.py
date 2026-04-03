@@ -12,10 +12,14 @@ class MaxScore(BaseTask):
         return "MaxScore"
 
     def reward(self, state, action, next_state, done, info) -> float:
-        """Return total score delta per step (includes Yahtzee bonus if triggered)."""
+        """Return normalised score delta per step (includes Yahtzee bonus if triggered).
+
+        Divided by 50.0 (max single-slot score) to keep reward scale comparable
+        to other tasks which return values in the 0-1 range.
+        """
         if state["phase"] != "score":
             return 0.0
-        return float(next_state["total_score"] - state["total_score"])
+        return float(next_state["total_score"] - state["total_score"]) / 50.0
 
 
 class ThresholdBeater(BaseTask):
@@ -104,7 +108,7 @@ class Conservative(BaseTask):
 
         cat, col = int(action[0]), int(action[1])
         score_gained = next_state["scores"][col][cat]
-        return 1.0 if score_gained > 0 else -5.0
+        return 1.0 if score_gained > 0 else -1.0
 
 
 TASK_REGISTRY: dict[str, type[BaseTask]] = {
