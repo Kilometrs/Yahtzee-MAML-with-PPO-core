@@ -1,5 +1,7 @@
 """ClearML experiment logger wrapper."""
 
+from datetime import datetime
+
 from clearml import Task
 
 
@@ -19,7 +21,13 @@ class ClearMLLogger:
             task_name: ClearML task name for this run.
             config: Full config dict — logged as a config artifact.
         """
-        task = Task.init(project_name=project_name, task_name=task_name)
+        run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        full_task_name = f"{run_id}_{task_name}"
+        task = Task.init(
+            project_name=project_name,
+            task_name=full_task_name,
+            reuse_last_task_id=False,
+        )
         task.connect(config)
         self._task = task
         self._logger = task.get_logger()
