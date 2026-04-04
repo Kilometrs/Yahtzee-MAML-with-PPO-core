@@ -1,120 +1,89 @@
-"""Five reward-shaped tasks for the FOMAML task distribution."""
+"""Pure JAX reward functions for Yahtzee meta-learning tasks.
 
-from env.constants import UPPER_CATEGORIES, UPPER_BONUS_THRESHOLD, UPPER_BONUS_VALUE, YAHTZEE
-from tasks.base_task import BaseTask
+Each function computes a scalar reward given score-step information.
+All are jit-compatible. Dispatched via compute_reward() using jax.lax.switch.
+"""
+import jax
+import jax.numpy as jnp
 
+from src.env.constants import YAHTZEE
 
-class MaxScore(BaseTask):
-    """Maximize the raw final score across all columns."""
-
-    @property
-    def name(self) -> str:
-        return "MaxScore"
-
-    def reward(self, state, action, next_state, done, info) -> float:
-        """Return normalised score delta per step (includes Yahtzee bonus if triggered).
-
-        Divided by 50.0 (max single-slot score) to keep reward scale comparable
-        to other tasks which return values in the 0-1 range.
-        """
-        if state["phase"] != "score":
-            return 0.0
-        return float(next_state["total_score"] - state["total_score"]) / 50.0
+TASK_NAMES = ["MaxScore", "ThresholdBeater", "UpperBonus", "YahtzeeHunter", "Conservative"]
 
 
-class ThresholdBeater(BaseTask):
-    """Maximize probability of exceeding a score threshold."""
-
-    def __init__(self, threshold: int = 250):
-        self.threshold = threshold
-
-    @property
-    def name(self) -> str:
-        return "ThresholdBeater"
-
-    def reward(self, state, action, next_state, done, info) -> float:
-        """Return 1.0 on episode end if final_score >= threshold, else 0.0."""
-        if done:
-            return 1.0 if next_state["total_score"] >= self.threshold else 0.0
-        return 0.0
+def reward_max_score(*, prev_total, new_total, category, score_gained,
+                     done, final_score, yahtzee_bonus_delta, upper_crossed_63,
+                     **kwargs) -> jnp.float32:
+    return (new_total - prev_total) / 50.0
 
 
-class UpperBonus(BaseTask):
-    """Maximize upper section bonus completion (63-point threshold per column)."""
-
-    @property
-    def name(self) -> str:
-        return "UpperBonus"
-
-    def reward(self, state, action, next_state, done, info) -> float:
-        """Reward upper section placements; bonus when 63-pt threshold crossed."""
-        if state["phase"] != "score":
-            return 0.0
-
-        cat, col = int(action[0]), int(action[1])
-        if cat not in UPPER_CATEGORIES:
-            return 0.0
-
-        score_gained = next_state["scores"][col][cat]
-        reward = score_gained / 3.0
-
-        # Check if the upper bonus was newly triggered for this column
-        prev_upper = sum(state["scores"][col][c] for c in UPPER_CATEGORIES)
-        new_upper = sum(next_state["scores"][col][c] for c in UPPER_CATEGORIES)
-        if prev_upper < UPPER_BONUS_THRESHOLD <= new_upper:
-            reward += float(UPPER_BONUS_VALUE)
-
-        return reward
+def reward_threshold_beater(*, prev_total, new_total, category, score_gained,
+                            done, final_score, yahtzee_bonus_delta,
+                            upper_crossed_63, threshold=250,
+                            **kwargs) -> jnp.float32:
+    return jnp.where(done & (final_score >= threshold), 1.0, 0.0)
 
 
-class YahtzeeHunter(BaseTask):
-    """Maximize Yahtzee frequency — aggressive high-variance play."""
-
-    @property
-    def name(self) -> str:
-        return "YahtzeeHunter"
-
-    def reward(self, state, action, next_state, done, info) -> float:
-        """Large reward per Yahtzee scored (50 pts) and per bonus Yahtzee (+100)."""
-        if state["phase"] != "score":
-            return 0.0
-
-        cat, col = int(action[0]), int(action[1])
-        reward = 0.0
-
-        if cat == YAHTZEE:
-            score_gained = next_state["scores"][col][cat]
-            if score_gained > 0:  # score_category returns 50 or 0 for YAHTZEE
-                reward += 50.0
-
-        # env increments yahtzee_bonus by YAHTZEE_BONUS_VALUE (100) per bonus triggered
-        yahtzee_bonus_delta = next_state["yahtzee_bonus"] - state["yahtzee_bonus"]
-        reward += float(yahtzee_bonus_delta)
-
-        return reward
+def reward_upper_bonus(*, prev_total, new_total, category, score_gained,
+                       done, final_score, yahtzee_bonus_delta, upper_crossed_63,
+                       **kwargs) -> jnp.float32:
+    is_upper = category < 6
+    base = jnp.where(is_upper, score_gained / 3.0, 0.0)
+    bonus = jnp.where(is_upper & upper_crossed_63, 35.0, 0.0)
+    return base + bonus
 
 
-class Conservative(BaseTask):
-    """Minimize zeros and cross-outs — consistent, safe play."""
-
-    @property
-    def name(self) -> str:
-        return "Conservative"
-
-    def reward(self, state, action, next_state, done, info) -> float:
-        """Penalize cross-outs and zero scores; reward consistent placements."""
-        if state["phase"] != "score":
-            return 0.0
-
-        cat, col = int(action[0]), int(action[1])
-        score_gained = next_state["scores"][col][cat]
-        return 1.0 if score_gained > 0 else -1.0
+def reward_yahtzee_hunter(*, prev_total, new_total, category, score_gained,
+                          done, final_score, yahtzee_bonus_delta,
+                          upper_crossed_63, **kwargs) -> jnp.float32:
+    yahtzee_reward = jnp.where((category == YAHTZEE) & (score_gained > 0), 50.0, 0.0)
+    return yahtzee_reward + yahtzee_bonus_delta
 
 
-TASK_REGISTRY: dict[str, type[BaseTask]] = {
-    "MaxScore": MaxScore,
-    "ThresholdBeater": ThresholdBeater,
-    "UpperBonus": UpperBonus,
-    "YahtzeeHunter": YahtzeeHunter,
-    "Conservative": Conservative,
-}
+def reward_conservative(*, prev_total, new_total, category, score_gained,
+                        done, final_score, yahtzee_bonus_delta, upper_crossed_63,
+                        **kwargs) -> jnp.float32:
+    return jnp.where(score_gained > 0, 1.0, -1.0)
+
+
+def compute_reward(task_id, *, prev_total, new_total, category, score_gained,
+                   done, final_score, yahtzee_bonus_delta, upper_crossed_63,
+                   threshold=250) -> jnp.float32:
+    """Dispatch reward computation by task_id via jax.lax.switch."""
+    prev_total = jnp.asarray(prev_total, dtype=jnp.float32)
+    new_total = jnp.asarray(new_total, dtype=jnp.float32)
+    category = jnp.asarray(category, dtype=jnp.int32)
+    score_gained = jnp.asarray(score_gained, dtype=jnp.float32)
+    done = jnp.asarray(done, dtype=jnp.bool_)
+    final_score = jnp.asarray(final_score, dtype=jnp.float32)
+    yahtzee_bonus_delta = jnp.asarray(yahtzee_bonus_delta, dtype=jnp.float32)
+    upper_crossed_63 = jnp.asarray(upper_crossed_63, dtype=jnp.bool_)
+    threshold = jnp.asarray(threshold, dtype=jnp.float32)
+
+    fns = [
+        lambda args: reward_max_score(
+            prev_total=args[0], new_total=args[1], category=args[2],
+            score_gained=args[3], done=args[4], final_score=args[5],
+            yahtzee_bonus_delta=args[6], upper_crossed_63=args[7]),
+        lambda args: reward_threshold_beater(
+            prev_total=args[0], new_total=args[1], category=args[2],
+            score_gained=args[3], done=args[4], final_score=args[5],
+            yahtzee_bonus_delta=args[6], upper_crossed_63=args[7],
+            threshold=args[8]),
+        lambda args: reward_upper_bonus(
+            prev_total=args[0], new_total=args[1], category=args[2],
+            score_gained=args[3], done=args[4], final_score=args[5],
+            yahtzee_bonus_delta=args[6], upper_crossed_63=args[7]),
+        lambda args: reward_yahtzee_hunter(
+            prev_total=args[0], new_total=args[1], category=args[2],
+            score_gained=args[3], done=args[4], final_score=args[5],
+            yahtzee_bonus_delta=args[6], upper_crossed_63=args[7]),
+        lambda args: reward_conservative(
+            prev_total=args[0], new_total=args[1], category=args[2],
+            score_gained=args[3], done=args[4], final_score=args[5],
+            yahtzee_bonus_delta=args[6], upper_crossed_63=args[7]),
+    ]
+
+    args = (prev_total, new_total, category, score_gained, done,
+            final_score, yahtzee_bonus_delta, upper_crossed_63, threshold)
+    return jax.lax.switch(task_id, fns, args)

@@ -1,4 +1,3 @@
-from tasks.base_task import BaseTask
-from tasks.reward_tasks import TASK_REGISTRY
+from src.tasks.reward_tasks import TASK_NAMES
 
-__all__ = ["BaseTask", "TASK_REGISTRY"]
+__all__ = ["TASK_NAMES"]
