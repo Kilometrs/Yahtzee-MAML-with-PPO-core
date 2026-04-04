@@ -1,22 +1,21 @@
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 WORKDIR /app
 
+# Install Python and uv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3.10-venv python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
 
-# Pin UV to the conda-managed Python in this base image.
-# pytorch/pytorch uses conda; UV_PYTHON ensures uv targets the correct interpreter
-# rather than relying on PATH resolution, which may change across base image updates.
-ENV UV_PYTHON=/opt/conda/bin/python \
+ENV UV_PYTHON=python3.10 \
     UV_SYSTEM_PYTHON=1
 
 # Copy dependency manifest and lockfile first (layer cache optimisation).
-# Changing src/ will not invalidate this layer.
 COPY pyproject.toml uv.lock ./
 
 # Install all runtime dependencies from the lockfile.
-# --no-install-project: skip building the local package (src/ not copied yet).
-# --frozen: never re-resolve; use uv.lock exactly as committed.
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy source and install the project package.
@@ -26,5 +25,5 @@ RUN uv sync --frozen --no-dev
 
 VOLUME ["/app/configs", "/app/checkpoints", "/app/data"]
 
-ENTRYPOINT ["uv", "run", "python", "scripts/train.py"]
+ENTRYPOINT ["uv", "run", "python3.10", "scripts/train.py"]
 CMD ["--config", "configs/server.yaml"]
