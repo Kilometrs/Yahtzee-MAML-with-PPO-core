@@ -1,5 +1,4 @@
-from agents.actor_critic import ActorCritic
-from agents.rollout_buffer import RolloutBuffer
-from agents.ppo import PPO
+from src.agents.actor_critic import ActorCritic
+from src.agents.ppo import compute_gae, ppo_loss
 
-__all__ = ["ActorCritic", "RolloutBuffer", "PPO"]
+__all__ = ["ActorCritic", "compute_gae", "ppo_loss"]
