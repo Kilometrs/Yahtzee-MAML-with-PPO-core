@@ -31,3 +31,7 @@ CATEGORY_NAMES = [
 
 # Upper section category indices (used for bonus calculation)
 UPPER_CATEGORIES = [ONES, TWOS, THREES, FOURS, FIVES, SIXES]
+
+# Phase encoding (int32 for JAX compatibility)
+PHASE_ROLL = 0
+PHASE_SCORE = 1
