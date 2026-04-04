@@ -21,6 +21,102 @@ from agents.actor_critic import ActorCritic
 from agents.rollout_buffer import RolloutBuffer
 
 
+def preprocess_rollout_for_device(sd: dict, device: torch.device, n_columns: int) -> dict:
+    """Pre-process rollout data into phase-separated GPU tensors.
+
+    Converts numpy object arrays into properly typed tensors ONCE,
+    avoiding repeated list() and np.array() conversions in _ppo_loss_fn.
+
+    Returns dict with keys: roll, score — each containing pre-processed tensors.
+    """
+    phases = sd["phases"]
+    result = {}
+
+    for phase_str in ("roll", "score"):
+        pmask_np = phases == phase_str
+        if not pmask_np.any():
+            result[phase_str] = None
+            continue
+
+        p_obs = torch.tensor(sd["obs"][pmask_np], device=device)
+        p_log_probs = torch.tensor(sd["log_probs"][pmask_np], device=device)
+
+        # Pre-stack action masks into a proper 2D float tensor
+        masks_list = sd["action_masks"][pmask_np]
+        mask_tensor = torch.tensor(
+            np.stack(masks_list), dtype=torch.float32, device=device
+        )
+
+        # Pre-convert actions to flat long tensor
+        actions_list = sd["actions"][pmask_np]
+        if phase_str == "score":
+            acts_np = np.stack(actions_list)  # (N, 2)
+            act_tensor = torch.tensor(
+                acts_np[:, 0] * n_columns + acts_np[:, 1],
+                dtype=torch.long, device=device,
+            )
+        else:
+            act_tensor = torch.tensor(
+                np.array(list(actions_list), dtype=np.int64),
+                dtype=torch.long, device=device,
+            )
+
+        # Boolean index tensor for selecting from full advantage/return arrays
+        pmask_torch = torch.from_numpy(pmask_np).to(device)
+
+        result[phase_str] = {
+            "obs": p_obs,
+            "log_probs": p_log_probs,
+            "mask": mask_tensor,
+            "actions": act_tensor,
+            "pmask": pmask_torch,
+            "count": int(pmask_np.sum()),
+        }
+
+    return result
+
+
+class _TracedInference(torch.nn.Module):
+    """Wraps ActorCritic for JIT tracing — computes all heads in one pass."""
+    def __init__(self, model: ActorCritic):
+        super().__init__()
+        self.trunk = model.trunk
+        self.roll_head = model.roll_head
+        self.score_head = model.score_head
+        self.value_head = model.value_head
+
+    def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        features = self.trunk(obs)
+        return self.roll_head(features), self.score_head(features), self.value_head(features)
+
+
+# Per-worker cached traced model (avoids re-tracing on every episode)
+_worker_traced_cache: dict = {}
+
+
+def _get_or_build_traced(model_kwargs: dict, state: dict) -> torch.jit.ScriptModule:
+    """Get cached traced model or build + cache one. Updates weights if cached."""
+    cache_key = (model_kwargs["obs_dim"], model_kwargs["n_columns"],
+                 model_kwargs["hidden_dim"], model_kwargs["n_layers"])
+
+    if cache_key in _worker_traced_cache:
+        traced, underlying = _worker_traced_cache[cache_key]
+        # Fast weight update — load_state_dict on the underlying model,
+        # traced model shares the same parameters
+        underlying.load_state_dict(state)
+        return traced
+
+    model = ActorCritic(**model_kwargs)
+    model.load_state_dict(state)
+    model.eval()
+    wrapper = _TracedInference(model)
+    wrapper.eval()
+    dummy = torch.randn(1, model_kwargs["obs_dim"])
+    traced = torch.jit.trace(wrapper, dummy)
+    _worker_traced_cache[cache_key] = (traced, model)
+    return traced
+
+
 def collect_episode_cpu(
     model_state: dict,
     model_kwargs: dict,
@@ -29,6 +125,8 @@ def collect_episode_cpu(
     fast_params_state: dict | None = None,
 ) -> dict:
     """Collect one episode entirely on CPU. Safe to call in a worker process.
+
+    Uses JIT-traced model with per-worker caching for fast inference.
 
     Args:
         model_state: state_dict of the meta-model (CPU tensors).
@@ -43,12 +141,13 @@ def collect_episode_cpu(
     """
     from env.yahtzee_env import YahtzeeEnv
 
-    model = ActorCritic(**model_kwargs)
-    weights = fast_params_state if fast_params_state is not None else model_state
-    model.load_state_dict(weights)
-    model.eval()
+    # Limit intra-op threads to avoid contention when running in parallel workers
+    torch.set_num_threads(2)
 
-    cpu = torch.device("cpu")
+    weights = fast_params_state if fast_params_state is not None else model_state
+    traced = _get_or_build_traced(model_kwargs, weights)
+    n_cols = model_kwargs["n_columns"]
+
     buf = RolloutBuffer()
     env = YahtzeeEnv(n_columns=n_columns)
     env.reward_fn = task.reward
@@ -58,12 +157,29 @@ def collect_episode_cpu(
         phase = info["phase"]
         mask = info["action_mask"]
 
-        obs_t = torch.tensor(obs, dtype=torch.float32, device=cpu)
-        mask_t = torch.tensor(mask, dtype=torch.float32, device=cpu)
+        obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
 
         with torch.no_grad():
-            action, log_prob = model.get_action(obs_t, phase, mask_t)
-            value = model.get_value(obs_t)
+            roll_logits, score_logits, value = traced(obs_t)
+
+        # Select logits based on phase and apply mask
+        logits = roll_logits if phase == "roll" else score_logits
+        mask_t = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
+        logits = logits.masked_fill(mask_t == 0, float("-inf"))
+
+        dist = torch.distributions.Categorical(logits=logits)
+        idx = dist.sample()
+        log_prob = dist.log_prob(idx)
+
+        idx_val = idx.squeeze(0)
+        log_prob_val = log_prob.squeeze(0)
+
+        if phase == "score":
+            cat = (idx_val // n_cols).item()
+            col = (idx_val % n_cols).item()
+            action = np.array([cat, col])
+        else:
+            action = idx_val.item()
 
         next_obs, reward, terminated, truncated, next_info = env.step(action)
         done = terminated or truncated
@@ -73,7 +189,7 @@ def collect_episode_cpu(
             action=action,
             reward=reward,
             done=done,
-            log_prob=log_prob.item(),
+            log_prob=log_prob_val.item(),
             value=value.squeeze().item(),
             phase=phase,
             action_mask=mask,
@@ -245,6 +361,104 @@ def _ppo_loss_fn(
     return torch.stack(loss_terms).sum() / total_count
 
 
+def _ppo_loss_fn_fast(
+    model: nn.Module,
+    fast_params: dict[str, torch.Tensor],
+    preprocessed: dict,
+    advantages: torch.Tensor,
+    returns: torch.Tensor,
+    clip_epsilon: float,
+    entropy_coef: float,
+    value_loss_coef: float,
+) -> torch.Tensor:
+    """Fast PPO loss using pre-processed phase-separated tensors.
+
+    Avoids repeated numpy object array conversions by using tensors
+    prepared by preprocess_rollout_for_device().
+    """
+    loss_terms = []
+    total_count = 0
+
+    for phase_str in ("roll", "score"):
+        pd = preprocessed.get(phase_str)
+        if pd is None:
+            continue
+
+        p_obs = pd["obs"]
+        p_adv = advantages[pd["pmask"]]
+        p_returns = returns[pd["pmask"]]
+        p_old_lp = pd["log_probs"]
+
+        logits, values_pred = functional_call(model, fast_params, (p_obs, phase_str))
+        logits = logits.masked_fill(pd["mask"] == 0, float("-inf"))
+        dist = torch.distributions.Categorical(logits=logits)
+
+        new_lp = dist.log_prob(pd["actions"])
+        entropy = dist.entropy()
+
+        ratio = torch.exp(new_lp - p_old_lp)
+        clip_adv = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * p_adv
+        policy_loss = -torch.min(ratio * p_adv, clip_adv).sum()
+        value_loss = 0.5 * F.mse_loss(
+            values_pred.squeeze(-1), p_returns, reduction="sum"
+        )
+        entropy_loss = -entropy_coef * entropy.sum()
+
+        loss_terms.append(policy_loss + value_loss_coef * value_loss + entropy_loss)
+        total_count += pd["count"]
+
+    if total_count == 0:
+        return torch.tensor(0.0)
+
+    return torch.stack(loss_terms).sum() / total_count
+
+
+def _grad_step(fast_params, loss, inner_lr):
+    """Shared gradient step logic for inner updates."""
+    if loss.grad_fn is None:
+        return fast_params
+
+    grads = torch.autograd.grad(
+        loss,
+        list(fast_params.values()),
+        create_graph=False,
+        allow_unused=True,
+    )
+    grads = [
+        g if g is not None else torch.zeros_like(v)
+        for g, v in zip(grads, fast_params.values())
+    ]
+
+    total_norm = torch.sqrt(sum(g.norm() ** 2 for g in grads))
+    clip_coef = 1.0 / (total_norm + 1e-6)
+    if clip_coef < 1.0:
+        grads = [g * clip_coef for g in grads]
+
+    return {
+        k: v - inner_lr * g
+        for (k, v), g in zip(fast_params.items(), grads)
+    }
+
+
+def inner_update_fast(
+    model: nn.Module,
+    fast_params: dict[str, torch.Tensor],
+    preprocessed: dict,
+    advantages: torch.Tensor,
+    returns: torch.Tensor,
+    inner_lr: float,
+    clip_epsilon: float = 0.2,
+    entropy_coef: float = 0.01,
+    value_loss_coef: float = 0.5,
+) -> dict[str, torch.Tensor]:
+    """Fast inner update using pre-processed tensors."""
+    loss = _ppo_loss_fn_fast(
+        model, fast_params, preprocessed, advantages, returns,
+        clip_epsilon, entropy_coef, value_loss_coef,
+    )
+    return _grad_step(fast_params, loss, inner_lr)
+
+
 def inner_update(
     model: nn.Module,
     fast_params: dict[str, torch.Tensor],
@@ -289,28 +503,4 @@ def inner_update(
         log_probs_old, phases, action_masks,
         clip_epsilon, entropy_coef, value_loss_coef,
     )
-
-    if loss.grad_fn is None:
-        return fast_params
-
-    grads = torch.autograd.grad(
-        loss,
-        list(fast_params.values()),
-        create_graph=False,
-        allow_unused=True,
-    )
-    grads = [
-        g if g is not None else torch.zeros_like(v)
-        for g, v in zip(grads, fast_params.values())
-    ]
-
-    # Clip inner-loop gradients to prevent fast_params from exploding
-    total_norm = torch.sqrt(sum(g.norm() ** 2 for g in grads))
-    clip_coef = 1.0 / (total_norm + 1e-6)
-    if clip_coef < 1.0:
-        grads = [g * clip_coef for g in grads]
-
-    return {
-        k: v - inner_lr * g
-        for (k, v), g in zip(fast_params.items(), grads)
-    }
+    return _grad_step(fast_params, loss, inner_lr)
