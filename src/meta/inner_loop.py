@@ -58,20 +58,15 @@ def collect_episodes(params, model, rng_key, task_id,
     return trajectories
 
 
+@jax.jit
 def prepare_ppo_data(trajectories, gamma=0.99, lam=0.95):
     """Flatten trajectories and compute GAE."""
     obs, actions, log_probs, rewards, dones, values, phases, masks = trajectories
     max_steps, n_envs = rewards.shape
 
-    all_advantages = []
-    all_returns = []
-    for i in range(n_envs):
-        adv, ret = compute_gae(rewards[:, i], values[:, i], dones[:, i], gamma=gamma, lam=lam)
-        all_advantages.append(adv)
-        all_returns.append(ret)
-
-    advantages = jnp.stack(all_advantages, axis=1)
-    returns = jnp.stack(all_returns, axis=1)
+    # Batched GAE: vmap over env dimension
+    batched_gae = jax.vmap(compute_gae, in_axes=(1, 1, 1, None, None), out_axes=1)
+    advantages, returns = batched_gae(rewards, values, dones, gamma, lam)
 
     T = max_steps * n_envs
     obs_flat = obs.reshape(T, -1)
