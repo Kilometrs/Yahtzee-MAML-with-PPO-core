@@ -1,131 +1,111 @@
-import math  # used by meta_update tests (Task 4)
-import torch
-from agents.actor_critic import ActorCritic
-from agents.ppo import compute_gae  # used by inner_update tests (Task 3)
-from env.yahtzee_env import YahtzeeEnv
-from meta.inner_loop import clone_params, inner_update, collect_episode
-from meta.maml import FOMAML
-from tasks.reward_tasks import MaxScore  # used by meta_update tests (Task 4)
+"""Tests for FOMAML inner loop, episode collection, and meta-update."""
+import jax
+import jax.numpy as jnp
+import pytest
+from src.agents.actor_critic import ActorCritic
+from src.meta.inner_loop import collect_episodes, inner_update_and_query_grad, prepare_ppo_data
+
+N_COLS = 6
+OBS_DIM = 7 + 26 * N_COLS
+MAX_ACTIONS = max(32, 13 * N_COLS)
 
 
-def test_clone_params_returns_grad_tensors():
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    result = clone_params(model)
-    assert isinstance(result, dict)
-    assert len(result) > 0
-    assert all(v.requires_grad for v in result.values())
-    # Values are clones, not references to original params
-    original = dict(model.named_parameters())
-    assert all(not result[k].data_ptr() == original[k].data_ptr() for k in result)
+@pytest.fixture
+def model_and_params():
+    model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=N_COLS)
+    rng = jax.random.PRNGKey(0)
+    params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+    return model, params
 
 
-def test_fomaml_instantiates():
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    maml = FOMAML(model, inner_lr=0.01, outer_lr=0.0003, n_inner_steps=5)
-    assert maml is not None
+class TestCollectEpisodes:
+    def test_returns_trajectory_tuple(self, model_and_params):
+        model, params = model_and_params
+        rng = jax.random.PRNGKey(42)
+        traj = collect_episodes(params, model, rng, jnp.int32(0),
+                                n_parallel_envs=2, n_columns=N_COLS, max_steps=50)
+        obs, actions, log_probs, rewards, dones, values, phases, masks = traj
+        assert obs.shape == (50, 2, OBS_DIM)
+        assert actions.shape == (50, 2)
+        assert rewards.shape == (50, 2)
+        assert dones.shape == (50, 2)
+        assert values.shape == (50, 2)
+        assert phases.shape == (50, 2)
+        assert masks.shape == (50, 2, MAX_ACTIONS)
+
+    def test_obs_are_finite(self, model_and_params):
+        model, params = model_and_params
+        rng = jax.random.PRNGKey(42)
+        traj = collect_episodes(params, model, rng, jnp.int32(0),
+                                n_parallel_envs=2, n_columns=N_COLS, max_steps=50)
+        assert jnp.all(jnp.isfinite(traj[0]))
+
+    def test_different_seeds_different_results(self, model_and_params):
+        model, params = model_and_params
+        t1 = collect_episodes(params, model, jax.random.PRNGKey(0),
+                              jnp.int32(0), 2, N_COLS, 50)
+        t2 = collect_episodes(params, model, jax.random.PRNGKey(1),
+                              jnp.int32(0), 2, N_COLS, 50)
+        assert not jnp.array_equal(t1[0], t2[0])
 
 
-def test_fomaml_has_meta_optimizer():
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    maml = FOMAML(model, inner_lr=0.01, outer_lr=0.0003, n_inner_steps=5)
-    assert hasattr(maml, "meta_optimizer")
+class TestPreparePPOData:
+    def test_output_shapes(self, model_and_params):
+        model, params = model_and_params
+        rng = jax.random.PRNGKey(42)
+        traj = collect_episodes(params, model, rng, jnp.int32(0),
+                                n_parallel_envs=2, n_columns=N_COLS, max_steps=50)
+        data = prepare_ppo_data(traj)
+        obs, actions, phases, masks, old_log_probs, advantages, returns = data
+        n = obs.shape[0]
+        assert actions.shape == (n,)
+        assert phases.shape == (n,)
+        assert masks.shape == (n, MAX_ACTIONS)
+        assert old_log_probs.shape == (n,)
+        assert advantages.shape == (n,)
+        assert returns.shape == (n,)
+
+    def test_advantages_normalized(self, model_and_params):
+        model, params = model_and_params
+        rng = jax.random.PRNGKey(42)
+        traj = collect_episodes(params, model, rng, jnp.int32(0),
+                                n_parallel_envs=4, n_columns=N_COLS, max_steps=50)
+        data = prepare_ppo_data(traj)
+        advantages = data[5]
+        assert jnp.abs(jnp.mean(advantages)) < 0.5
 
 
-def test_collect_episode_returns_nonempty_buffer():
-    torch.manual_seed(0)
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    env = YahtzeeEnv(n_columns=3)
-    buf = collect_episode(model, env, torch.device("cpu"))
-    assert len(buf) > 0
+class TestInnerUpdateAndQueryGrad:
+    def test_returns_grads_and_losses(self, model_and_params):
+        model, params = model_and_params
+        rng = jax.random.PRNGKey(42)
+        rng1, rng2 = jax.random.split(rng)
+        support_traj = collect_episodes(params, model, rng1, jnp.int32(0), 2, N_COLS, 50)
+        query_traj = collect_episodes(params, model, rng2, jnp.int32(0), 2, N_COLS, 50)
+        support_data = prepare_ppo_data(support_traj)
+        query_data = prepare_ppo_data(query_traj)
+        config = {"inner_lr": 0.001, "n_inner_steps": 3}
+        grads, query_loss, inner_losses = inner_update_and_query_grad(
+            params, model, support_data, query_data, config)
+        grad_leaves = jax.tree.leaves(grads)
+        param_leaves = jax.tree.leaves(params)
+        assert len(grad_leaves) == len(param_leaves)
+        for g, p in zip(grad_leaves, param_leaves):
+            assert g.shape == p.shape
+        assert query_loss.shape == ()
+        assert jnp.isfinite(query_loss)
+        assert inner_losses.shape == (3,)
 
-
-def test_collect_episode_param_swap_restores_model():
-    torch.manual_seed(0)
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    env = YahtzeeEnv(n_columns=3)
-    original_val = next(iter(model.parameters())).clone()
-    fast_params = {k: v.clone() + 1.0 for k, v in model.named_parameters()}
-    collect_episode(model, env, torch.device("cpu"), params=fast_params)
-    restored_val = next(iter(model.parameters()))
-    assert torch.allclose(restored_val, original_val), \
-        "Model params not restored after collect_episode with params"
-
-
-def test_inner_update_changes_fast_params():
-    torch.manual_seed(0)
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    env = YahtzeeEnv(n_columns=3)
-    buf = collect_episode(model, env, torch.device("cpu"))
-    adv, ret = compute_gae(buf, gae_lambda=0.95)
-    adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()
-    ret = ret.detach()
-    data = buf.get()
-    fast_params = clone_params(model)
-    original = {k: v.clone() for k, v in fast_params.items()}
-    updated = inner_update(
-        model=model,
-        fast_params=fast_params,
-        obs=torch.tensor(data["obs"]),
-        actions=data["actions"],
-        advantages=adv,
-        returns=ret,
-        log_probs_old=torch.tensor(data["log_probs"]),
-        phases=data["phases"],
-        action_masks=data["action_masks"],
-        inner_lr=0.01,
-    )
-    changed = [k for k in updated if not torch.allclose(updated[k], original[k])]
-    assert len(changed) > 0, "inner_update must change at least one parameter"
-
-
-def test_inner_update_does_not_mutate_model():
-    torch.manual_seed(0)
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    env = YahtzeeEnv(n_columns=3)
-    buf = collect_episode(model, env, torch.device("cpu"))
-    adv, ret = compute_gae(buf, gae_lambda=0.95)
-    adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()
-    ret = ret.detach()
-    data = buf.get()
-    original_model_param = next(iter(model.parameters())).clone()
-    fast_params = clone_params(model)
-    inner_update(
-        model=model,
-        fast_params=fast_params,
-        obs=torch.tensor(data["obs"]),
-        actions=data["actions"],
-        advantages=adv,
-        returns=ret,
-        log_probs_old=torch.tensor(data["log_probs"]),
-        phases=data["phases"],
-        action_masks=data["action_masks"],
-        inner_lr=0.01,
-    )
-    assert torch.allclose(next(iter(model.parameters())), original_model_param), \
-        "inner_update must not modify the original model parameters"
-
-
-def test_meta_update_returns_finite_scalar():
-    torch.manual_seed(0)
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    maml = FOMAML(model, inner_lr=0.01, outer_lr=0.0003, n_inner_steps=1)
-    tasks = [MaxScore()]
-    env_fn = lambda: YahtzeeEnv(n_columns=3)
-    ppo_cfg = dict(clip_epsilon=0.2, entropy_coef=0.01, value_loss_coef=0.5, gae_lambda=0.95)
-    meta_loss, per_task_losses = maml.meta_update(tasks, env_fn, ppo_cfg, torch.device("cpu"))
-    assert isinstance(meta_loss, float)
-    assert math.isfinite(meta_loss)
-
-
-def test_meta_update_changes_model_params():
-    torch.manual_seed(0)
-    model = ActorCritic(obs_dim=85, n_columns=3)
-    maml = FOMAML(model, inner_lr=0.01, outer_lr=0.0003, n_inner_steps=1)
-    original = {k: v.clone() for k, v in model.named_parameters()}
-    tasks = [MaxScore()]
-    env_fn = lambda: YahtzeeEnv(n_columns=3)
-    ppo_cfg = dict(clip_epsilon=0.2, entropy_coef=0.01, value_loss_coef=0.5, gae_lambda=0.95)
-    maml.meta_update(tasks, env_fn, ppo_cfg, torch.device("cpu"))
-    changed = [k for k, v in model.named_parameters()
-               if not torch.allclose(v, original[k])]
-    assert len(changed) > 0, "meta_update must change at least one meta-parameter"
+    def test_inner_update_produces_nonzero_grads(self, model_and_params):
+        model, params = model_and_params
+        rng = jax.random.PRNGKey(42)
+        rng1, rng2 = jax.random.split(rng)
+        support_traj = collect_episodes(params, model, rng1, jnp.int32(0), 2, N_COLS, 50)
+        query_traj = collect_episodes(params, model, rng2, jnp.int32(0), 2, N_COLS, 50)
+        support_data = prepare_ppo_data(support_traj)
+        query_data = prepare_ppo_data(query_traj)
+        config = {"inner_lr": 0.01, "n_inner_steps": 5}
+        grads, _, _ = inner_update_and_query_grad(
+            params, model, support_data, query_data, config)
+        has_nonzero = any(jnp.any(g != 0) for g in jax.tree.leaves(grads))
+        assert has_nonzero

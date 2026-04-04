@@ -1,4 +1,3 @@
-from meta.maml import FOMAML
-from meta.inner_loop import clone_params, inner_update, collect_episode
+from src.meta.inner_loop import collect_episodes, prepare_ppo_data, inner_update_and_query_grad
 
-__all__ = ["FOMAML", "clone_params", "inner_update", "collect_episode"]
+__all__ = ["collect_episodes", "prepare_ppo_data", "inner_update_and_query_grad"]
