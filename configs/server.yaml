@@ -1,6 +1,7 @@
 env:
   n_columns: 6
   seed: 42
+  max_steps_per_episode: 250
 
 agent:
   hidden_dim: 256
@@ -11,8 +12,6 @@ ppo:
   entropy_coef: 0.01
   value_loss_coef: 0.5
   gae_lambda: 0.95
-  n_epochs: 4
-  batch_size: 256
 
 meta:
   inner_lr: 0.001
@@ -20,7 +19,7 @@ meta:
   n_inner_steps: 5
   n_tasks_per_batch: 5
   n_meta_steps: 50000
-  n_workers: 10
+  n_parallel_envs: 50
 
 tasks:
   threshold_beater_score: 250
@@ -28,7 +27,6 @@ tasks:
 training:
   checkpoint_every: 500
   checkpoint_dir: /mnt/checkpoints/
-  device: cuda
 
 clearml:
   project_name: yahtzee-maml-server
