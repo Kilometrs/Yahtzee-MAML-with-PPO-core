@@ -3,9 +3,6 @@
 Shared MLP trunk with three heads: roll logits (32), score logits (13*n_cols),
 and value (scalar). Phase-dependent head selection via jax.lax.cond.
 Output logits are always padded to max(32, 13*n_columns) for uniform shapes.
-
-The value head receives the trunk features concatenated with outputs from both
-policy heads, ensuring gradient flow to all parameters during meta-learning.
 """
 import jax
 import jax.numpy as jnp
@@ -28,11 +25,7 @@ class ActorCritic(nn.Module):
 
         roll_logits = nn.Dense(32)(x)
         score_logits = nn.Dense(13 * self.n_columns)(x)
-
-        # Value head sees trunk + both policy head outputs so gradients flow
-        # through all parameters regardless of the active phase.
-        value_input = jnp.concatenate([x, roll_logits, score_logits])
-        value = nn.Dense(1)(value_input).squeeze(-1)
+        value = nn.Dense(1)(x).squeeze(-1)
 
         roll_padded = jnp.concatenate([roll_logits, jnp.full(max_actions - 32, -jnp.inf)])
         score_padded = score_logits
