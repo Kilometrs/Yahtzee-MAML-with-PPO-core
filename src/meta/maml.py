@@ -3,7 +3,11 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from src.meta.inner_loop import collect_episodes, prepare_ppo_data, inner_update_and_query_grad
+from src.meta.inner_loop import (
+    collect_all_episodes, prepare_all_ppo_data, all_inner_updates,
+    # backward compat for evaluator / tests
+    collect_episodes, prepare_ppo_data, inner_update_and_query_grad,
+)
 from src.tasks.reward_tasks import TASK_NAMES
 
 
@@ -11,58 +15,80 @@ class FOMAML:
     def __init__(self, model, config):
         self.model = model
         self.config = config
-        self.n_inner_steps = config["meta"]["n_inner_steps"]
-        self.inner_lr = config["meta"]["inner_lr"]
+        self.inner_lr = float(config["meta"]["inner_lr"])
+        self.n_inner_steps = int(config["meta"]["n_inner_steps"])
         self.n_parallel_envs = config["meta"]["n_parallel_envs"]
         self.n_columns = config["env"]["n_columns"]
         self.max_steps = config["env"]["max_steps_per_episode"]
-        self.n_tasks = config["meta"]["n_tasks_per_batch"]
+        self.n_tasks = min(config["meta"]["n_tasks_per_batch"], len(TASK_NAMES))
         self.gae_lambda = config["ppo"]["gae_lambda"]
         self.optimizer = optax.adam(config["meta"]["outer_lr"])
-        self._inner_config = {"inner_lr": self.inner_lr, "n_inner_steps": self.n_inner_steps}
+
+        self._task_ids = jnp.arange(self.n_tasks, dtype=jnp.int32)
+        self._inner_config = {
+            "inner_lr": self.inner_lr,
+            "n_inner_steps": self.n_inner_steps,
+        }
 
     def init_optimizer(self, params):
         return self.optimizer.init(params)
 
     def meta_update(self, meta_params, opt_state, rng):
-        """One meta-step. Returns (meta_params, opt_state, rng, meta_loss, per_task_losses, skipped)."""
-        meta_grads = None
-        task_losses = []
-        task_ids = list(range(min(self.n_tasks, len(TASK_NAMES))))
+        """One meta-step — fully batched over tasks.
 
-        for task_id in task_ids:
-            rng, support_rng, query_rng = jax.random.split(rng, 3)
-            support_traj = collect_episodes(
-                meta_params, self.model, support_rng, jnp.int32(task_id),
-                self.n_parallel_envs, self.n_columns, self.max_steps)
-            support_data = prepare_ppo_data(support_traj, gamma=0.99, lam=self.gae_lambda)
-            query_traj = collect_episodes(
-                meta_params, self.model, query_rng, jnp.int32(task_id),
-                self.n_parallel_envs, self.n_columns, self.max_steps)
-            query_data = prepare_ppo_data(query_traj, gamma=0.99, lam=self.gae_lambda)
-            task_grads, query_loss, inner_losses = inner_update_and_query_grad(
-                meta_params, self.model, support_data, query_data, self._inner_config)
-            if meta_grads is None:
-                meta_grads = task_grads
-            else:
-                meta_grads = jax.tree.map(lambda a, b: a + b, meta_grads, task_grads)
-            task_losses.append(float(query_loss))
+        Returns (meta_params, opt_state, rng, meta_loss, per_task_losses, skipped).
+        """
+        n_tasks = self.n_tasks
 
-        n_tasks = len(task_ids)
-        meta_grads = jax.tree.map(lambda g: g / n_tasks, meta_grads)
+        # Split RNG: n_tasks for support + n_tasks for query
+        rng, split_rng = jax.random.split(rng)
+        all_rngs = jax.random.split(split_rng, 2 * n_tasks)
+        support_rngs = all_rngs[:n_tasks]
+        query_rngs = all_rngs[n_tasks:]
 
+        # 1. Collect all episodes (batched over tasks)
+        support_trajs, query_trajs = collect_all_episodes(
+            meta_params, self.model, support_rngs, query_rngs, self._task_ids,
+            self.n_parallel_envs, self.n_columns, self.max_steps,
+        )
+
+        # 2. Prepare PPO data for all tasks (batched)
+        all_support_data, all_query_data = prepare_all_ppo_data(
+            support_trajs, query_trajs,
+        )
+
+        # 3. Inner updates for all tasks (batched via vmap)
+        all_grads, all_query_losses, all_inner_losses = all_inner_updates(
+            meta_params, self.model, all_support_data, all_query_data,
+            self.inner_lr, self.n_inner_steps,
+        )
+
+        # 4. Average gradients across tasks
+        meta_grads = jax.tree.map(lambda g: jnp.mean(g, axis=0), all_grads)
+
+        # Task losses for logging
+        task_losses = [float(all_query_losses[i]) for i in range(n_tasks)]
+
+        # NaN guard
         has_nan = jax.tree_util.tree_reduce(
             lambda acc, g: acc | jnp.any(jnp.isnan(g)) | jnp.any(jnp.isinf(g)),
-            meta_grads, initializer=False)
+            meta_grads, initializer=False,
+        )
         if has_nan:
             return meta_params, opt_state, rng, float("nan"), task_losses, True
 
+        # Clip meta-gradient (max_norm=1.0)
         grad_norm = jnp.sqrt(jax.tree_util.tree_reduce(
-            lambda acc, g: acc + jnp.sum(g ** 2), meta_grads, initializer=0.0))
+            lambda acc, g: acc + jnp.sum(g ** 2), meta_grads, initializer=0.0,
+        ))
         scale = jnp.minimum(1.0, 1.0 / (grad_norm + 1e-8))
         meta_grads = jax.tree.map(lambda g: g * scale, meta_grads)
 
-        updates, opt_state = self.optimizer.update(meta_grads, opt_state, meta_params)
+        # Optimizer step
+        updates, opt_state = self.optimizer.update(
+            meta_grads, opt_state, meta_params,
+        )
         meta_params = optax.apply_updates(meta_params, updates)
+
         meta_loss = sum(task_losses) / n_tasks
         return meta_params, opt_state, rng, meta_loss, task_losses, False
