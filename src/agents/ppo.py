@@ -8,6 +8,43 @@ from agents.actor_critic import ActorCritic
 from agents.rollout_buffer import RolloutBuffer
 
 
+def compute_gae_from_arrays(
+    rewards: np.ndarray,
+    values: np.ndarray,
+    dones: np.ndarray,
+    gae_lambda: float,
+    gamma: float = 0.99,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute GAE advantages and returns from numpy arrays directly.
+
+    Args:
+        rewards: float32 array of shape (T,).
+        values: float32 array of shape (T,).
+        dones: float32 array of shape (T,).
+        gae_lambda: Lambda for GAE smoothing.
+        gamma: Discount factor.
+
+    Returns:
+        (advantages, returns): Both tensors of shape (T,).
+    """
+    rewards_t = torch.from_numpy(rewards)
+    values_t = torch.from_numpy(values)
+    dones_t = torch.from_numpy(dones)
+    T = len(rewards_t)
+
+    advantages = torch.zeros(T)
+    last_adv = 0.0
+
+    for t in reversed(range(T)):
+        next_value = values_t[t + 1].item() if t + 1 < T else 0.0
+        delta = rewards_t[t] + gamma * next_value * (1.0 - dones_t[t]) - values_t[t]
+        advantages[t] = delta + gamma * gae_lambda * (1.0 - dones_t[t]) * last_adv
+        last_adv = advantages[t].item()
+
+    returns = advantages + values_t
+    return advantages, returns
+
+
 def compute_gae(
     buffer: RolloutBuffer,
     gae_lambda: float,
