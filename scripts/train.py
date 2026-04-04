@@ -1,74 +1,41 @@
-"""Training entry point.
-
-Usage:
-    python scripts/train.py --config configs/default.yaml
-    python scripts/train.py --config configs/server.yaml
-    python scripts/train.py --config configs/default.yaml --resume checkpoints/500.pt
-"""
-
+"""Training entry point for JAX Yahtzee FOMAML."""
 import argparse
 import os
-import random
-import sys
-from pathlib import Path
-
-import numpy as np
-import torch
 import yaml
+import numpy as np
+import jax
+
+from src.training.meta_trainer import MetaTrainer
 
 
-def _load_dotenv(path: Path) -> None:
-    """Load key=value pairs from a .env file into os.environ (no overwrite)."""
-    if not path.exists():
+def _load_dotenv(path=".env"):
+    if not os.path.exists(path):
         return
     with open(path) as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if key and key not in os.environ:
-                os.environ[key] = value
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+            if line and not line.startswith("#") and "=" in line:
+                key, val = line.split("=", 1)
+                os.environ.setdefault(key.strip(), val.strip())
 
 
 def main():
-    _load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-
-    parser = argparse.ArgumentParser(description="Run FOMAML meta-training")
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Path to checkpoint to resume from",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--resume", type=str, default=None)
     args = parser.parse_args()
-
+    _load_dotenv()
     with open(args.config) as f:
         config = yaml.safe_load(f)
-
-    seed = config["env"]["seed"]
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-    from training import MetaTrainer
-
+    np.random.seed(config["env"]["seed"])
+    print(f"JAX devices: {jax.devices()}")
+    print(f"Config: {args.config}")
     trainer = MetaTrainer(config)
-
+    start_step = 0
     if args.resume:
-        trainer.load_checkpoint(args.resume)
-
-    try:
-        trainer.train()
-    except Exception as e:
-        print(f"Training failed: {e}", file=sys.stderr)
-        raise
+        start_step = trainer.load_checkpoint(args.resume)
+        print(f"Resumed from step {start_step}")
+    trainer.train(start_step=start_step)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-from training.meta_trainer import MetaTrainer
-from training.evaluator import Evaluator
+from src.training.meta_trainer import MetaTrainer
 
-__all__ = ["MetaTrainer", "Evaluator"]
+__all__ = ["MetaTrainer"]
