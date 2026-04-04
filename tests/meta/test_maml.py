@@ -112,9 +112,9 @@ def test_meta_update_returns_finite_scalar():
     tasks = [MaxScore()]
     env_fn = lambda: YahtzeeEnv(n_columns=3)
     ppo_cfg = dict(clip_epsilon=0.2, entropy_coef=0.01, value_loss_coef=0.5, gae_lambda=0.95)
-    result = maml.meta_update(tasks, env_fn, ppo_cfg, torch.device("cpu"))
-    assert isinstance(result, float)
-    assert math.isfinite(result)
+    meta_loss, per_task_losses = maml.meta_update(tasks, env_fn, ppo_cfg, torch.device("cpu"))
+    assert isinstance(meta_loss, float)
+    assert math.isfinite(meta_loss)
 
 
 def test_meta_update_changes_model_params():

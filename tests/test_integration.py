@@ -54,7 +54,7 @@ def test_10_meta_steps_and_checkpoint(tmp_path):
     losses = []
     for step in range(10):
         task_batch = random.sample(tasks, min(n_tasks_per_batch, len(tasks)))
-        loss = fomaml.meta_update(
+        loss, per_task = fomaml.meta_update(
             tasks=task_batch,
             env_fn=lambda: YahtzeeEnv(n_columns=n_columns),
             ppo_cfg=ppo_cfg,
