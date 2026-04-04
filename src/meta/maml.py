@@ -8,8 +8,11 @@ from typing import Callable
 
 
 
-from meta.inner_loop import clone_params, inner_update, collect_episode, collect_episode_cpu, _ppo_loss_fn
-from agents.ppo import compute_gae
+from meta.inner_loop import (
+    clone_params, inner_update, collect_episode, collect_episode_cpu,
+    _ppo_loss_fn, _ppo_loss_fn_fast, inner_update_fast, preprocess_rollout_for_device,
+)
+from agents.ppo import compute_gae_from_arrays
 from agents.rollout_buffer import RolloutBuffer
 
 
@@ -118,38 +121,29 @@ class FOMAML:
                 for task in tasks
             ]
 
-        # --- Inner loop adaptation + query rollout collection ---
-        # Inner loop runs on GPU (fast); query collection parallelised on CPU
+        # --- Inner loop adaptation + pipelined query collection ---
+        # As each task's inner loop finishes on GPU, immediately submit
+        # its query collection to CPU workers (overlaps GPU and CPU work).
         fast_params_list = []
-        for sd in support_data:
-            buf = RolloutBuffer()
-            for i in range(len(sd["obs"])):
-                buf.add(
-                    obs=sd["obs"][i],
-                    action=sd["actions"][i],
-                    reward=sd["rewards"][i],
-                    done=bool(sd["dones"][i]),
-                    log_prob=float(sd["log_probs"][i]),
-                    value=float(sd["values"][i]),
-                    phase=sd["phases"][i],
-                    action_mask=sd["action_masks"][i],
-                )
-            adv_s, ret_s = compute_gae(buf, gae_lambda)
+        query_futs = []
+        for task, sd in zip(tasks, support_data):
+            adv_s, ret_s = compute_gae_from_arrays(
+                sd["rewards"], sd["values"], sd["dones"], gae_lambda,
+            )
             adv_s = ((adv_s - adv_s.mean()) / (adv_s.std() + 1e-8)).detach().to(device)
             ret_s = ((ret_s - ret_s.mean()) / (ret_s.std() + 1e-8)).detach().to(device)
 
+            # Pre-process once — avoids repeated numpy→tensor conversions in inner loop
+            preprocessed = preprocess_rollout_for_device(sd, device, n_columns)
+
             fast_params = clone_params(self.model)
             for _ in range(self.n_inner_steps):
-                fast_params = inner_update(
+                fast_params = inner_update_fast(
                     model=self.model,
                     fast_params=fast_params,
-                    obs=torch.tensor(sd["obs"], device=device),
-                    actions=sd["actions"],
+                    preprocessed=preprocessed,
                     advantages=adv_s,
                     returns=ret_s,
-                    log_probs_old=torch.tensor(sd["log_probs"], device=device),
-                    phases=sd["phases"],
-                    action_masks=sd["action_masks"],
                     inner_lr=self.inner_lr,
                     clip_epsilon=clip_epsilon,
                     entropy_coef=entropy_coef,
@@ -157,55 +151,39 @@ class FOMAML:
                 )
             fast_params_list.append(fast_params)
 
-        # --- Parallel query rollout collection (CPU workers, adapted params) ---
-        if self._pool is not None:
-            query_futs = [
-                self._pool.submit(
-                    collect_episode_cpu,
-                    cpu_state,
-                    model_kwargs,
-                    task,
-                    n_columns,
-                    {k: v.detach().cpu() for k, v in fp.items()},
+            # Submit query collection immediately (overlaps with next task's inner loop)
+            fp_cpu = {k: v.detach().cpu() for k, v in fast_params.items()}
+            if self._pool is not None:
+                query_futs.append(
+                    self._pool.submit(collect_episode_cpu, cpu_state, model_kwargs,
+                                      task, n_columns, fp_cpu)
                 )
-                for task, fp in zip(tasks, fast_params_list)
-            ]
+            else:
+                query_futs.append(
+                    collect_episode_cpu(cpu_state, model_kwargs, task, n_columns, fp_cpu)
+                )
+
+        # Collect query results (most should already be done due to pipelining)
+        if self._pool is not None:
             query_data = [f.result() for f in query_futs]
         else:
-            query_data = [
-                collect_episode_cpu(cpu_state, model_kwargs, task, n_columns,
-                                    {k: v.detach().cpu() for k, v in fp.items()})
-                for task, fp in zip(tasks, fast_params_list)
-            ]
+            query_data = query_futs
 
         # --- Meta-gradient computation (GPU) ---
         for task, fast_params, qd in zip(tasks, fast_params_list, query_data):
-            qbuf = RolloutBuffer()
-            for i in range(len(qd["obs"])):
-                qbuf.add(
-                    obs=qd["obs"][i],
-                    action=qd["actions"][i],
-                    reward=qd["rewards"][i],
-                    done=bool(qd["dones"][i]),
-                    log_prob=float(qd["log_probs"][i]),
-                    value=float(qd["values"][i]),
-                    phase=qd["phases"][i],
-                    action_mask=qd["action_masks"][i],
-                )
-            adv_q, ret_q = compute_gae(qbuf, gae_lambda)
+            adv_q, ret_q = compute_gae_from_arrays(
+                qd["rewards"], qd["values"], qd["dones"], gae_lambda,
+            )
             adv_q = ((adv_q - adv_q.mean()) / (adv_q.std() + 1e-8)).detach().to(device)
             ret_q = ((ret_q - ret_q.mean()) / (ret_q.std() + 1e-8)).detach().to(device)
 
-            query_loss = _ppo_loss_fn(
+            q_preprocessed = preprocess_rollout_for_device(qd, device, n_columns)
+            query_loss = _ppo_loss_fn_fast(
                 model=self.model,
                 fast_params=fast_params,
-                obs=torch.tensor(qd["obs"], device=device),
-                actions=qd["actions"],
+                preprocessed=q_preprocessed,
                 advantages=adv_q,
                 returns=ret_q,
-                log_probs_old=torch.tensor(qd["log_probs"], device=device),
-                phases=qd["phases"],
-                action_masks=qd["action_masks"],
                 clip_epsilon=clip_epsilon,
                 entropy_coef=entropy_coef,
                 value_loss_coef=value_loss_coef,
