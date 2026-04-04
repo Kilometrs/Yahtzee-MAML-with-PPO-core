@@ -3932,7 +3932,7 @@ dependencies = [
     { name = "tqdm" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "ipykernel" },
     { name = "jupyter" },
@@ -3945,20 +3945,23 @@ requires-dist = [
     { name = "chex", specifier = ">=0.1.80" },
     { name = "clearml", specifier = ">=1.14.0" },
     { name = "flax", specifier = ">=0.8.0" },
-    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "jax", extras = ["cuda12"], specifier = ">=0.4.30" },
     { name = "jaxlib", specifier = ">=0.4.30" },
-    { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "optax", specifier = ">=0.2.0" },
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pyarrow", specifier = ">=15.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tqdm", specifier = ">=4.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipykernel", specifier = ">=6.0" },
+    { name = "jupyter", specifier = ">=1.0" },
+    { name = "pytest", specifier = ">=7.0" },
+    { name = "pytest-cov", specifier = ">=4.0" },
+]
 
 [[package]]
 name = "zipp"
