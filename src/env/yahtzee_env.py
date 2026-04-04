@@ -92,12 +92,21 @@ def _roll_step(state, action, n_columns):
     return new_state, jnp.float32(0.0), jnp.bool_(False)
 
 
+def _compute_true_total(scores, yahtzee_bonus):
+    """Compute total score including upper bonuses and yahtzee bonuses."""
+    raw = jnp.sum(scores)
+    upper_per_col = jnp.sum(scores[:6, :], axis=0)
+    upper_bonuses = jnp.sum(jnp.where(upper_per_col >= UPPER_BONUS_THRESHOLD,
+                                       UPPER_BONUS_VALUE, 0))
+    return raw + upper_bonuses + yahtzee_bonus
+
+
 def _score_step(state, action, task_id, n_columns):
     category = action // n_columns
     column = action % n_columns
 
     score_val = score_category(state.dice, category)
-    prev_total = jnp.sum(state.scores)
+    prev_total = _compute_true_total(state.scores, state.yahtzee_bonus)
     prev_upper_col = jnp.sum(state.scores[:6, column])
 
     new_scores = state.scores.at[category, column].set(score_val)
@@ -113,8 +122,7 @@ def _score_step(state, action, task_id, n_columns):
     yahtzee_bonus_delta = jnp.where(yahtzee_bonus_triggered, YAHTZEE_BONUS_VALUE, 0)
     new_yahtzee_bonus = state.yahtzee_bonus + yahtzee_bonus_delta
 
-    upper_bonus_delta = jnp.where(newly_crossed_63, UPPER_BONUS_VALUE, 0)
-    new_total = jnp.sum(new_scores) + upper_bonus_delta + yahtzee_bonus_delta
+    new_total = _compute_true_total(new_scores, new_yahtzee_bonus)
 
     done = jnp.all(new_filled)
 
