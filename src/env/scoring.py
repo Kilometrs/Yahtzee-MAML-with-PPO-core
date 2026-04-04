@@ -1,65 +1,93 @@
-"""Scoring logic for all 13 Yahtzee categories."""
+"""JAX-compatible Yahtzee scoring functions.
 
-from collections import Counter
-
-from env.constants import (
-    ONES, TWOS, THREES, FOURS, FIVES, SIXES,
-    THREE_OF_A_KIND, FOUR_OF_A_KIND, FULL_HOUSE,
-    SMALL_STRAIGHT, LARGE_STRAIGHT, YAHTZEE, CHANCE,
-    N_CATEGORIES,
-)
+All functions are pure and jit-compatible. They operate on jnp arrays
+and use no Python control flow.
+"""
+import jax
+import jax.numpy as jnp
 
 
-def score_category(dice: list[int], category: int) -> int:
-    """Score a set of dice for the given category index.
+def _dice_counts(dice: jnp.ndarray) -> jnp.ndarray:
+    """Count occurrences of each face value 0-6. Index 0 is unused."""
+    return jnp.zeros(7, dtype=jnp.int32).at[dice].add(1)
 
-    Returns the points earned. Returns 0 if dice do not satisfy the
-    category requirements. Chance always returns sum of all dice.
 
-    Args:
-        dice: List of 5 integers (1-6).
-        category: Category index (see constants.py).
+def _score_upper(dice: jnp.ndarray, face: int) -> jnp.int32:
+    """Score for upper section (Ones through Sixes)."""
+    return jnp.sum(dice == face) * face
 
-    Returns:
-        Integer score (>= 0).
-    """
-    counts = Counter(dice)
 
-    if category == ONES:
-        return counts[1]
-    if category == TWOS:
-        return counts[2] * 2
-    if category == THREES:
-        return counts[3] * 3
-    if category == FOURS:
-        return counts[4] * 4
-    if category == FIVES:
-        return counts[5] * 5
-    if category == SIXES:
-        return counts[6] * 6
-    if category == THREE_OF_A_KIND:
-        return sum(dice) if max(counts.values()) >= 3 else 0
-    if category == FOUR_OF_A_KIND:
-        return sum(dice) if max(counts.values()) >= 4 else 0
-    if category == FULL_HOUSE:
-        return 25 if sorted(counts.values()) == [2, 3] else 0
-    if category == SMALL_STRAIGHT:
-        s = set(dice)
-        return 30 if ({1, 2, 3, 4} <= s or {2, 3, 4, 5} <= s or {3, 4, 5, 6} <= s) else 0
-    if category == LARGE_STRAIGHT:
-        s = set(dice)
-        return 40 if s in ({1, 2, 3, 4, 5}, {2, 3, 4, 5, 6}) else 0
-    if category == YAHTZEE:
-        return 50 if len(counts) == 1 else 0
-    if category == CHANCE:
-        return sum(dice)
-    raise ValueError(f"Unknown category index: {category}")
+def _score_three_of_a_kind(dice: jnp.ndarray) -> jnp.int32:
+    counts = _dice_counts(dice)
+    return jnp.where(jnp.max(counts) >= 3, jnp.sum(dice), 0)
+
+
+def _score_four_of_a_kind(dice: jnp.ndarray) -> jnp.int32:
+    counts = _dice_counts(dice)
+    return jnp.where(jnp.max(counts) >= 4, jnp.sum(dice), 0)
+
+
+def _score_full_house(dice: jnp.ndarray) -> jnp.int32:
+    counts = _dice_counts(dice)
+    nonzero_counts = jnp.sort(counts)[::-1][:2]
+    is_full_house = (nonzero_counts[0] == 3) & (nonzero_counts[1] == 2)
+    return jnp.where(is_full_house, 25, 0)
+
+
+def _score_small_straight(dice: jnp.ndarray) -> jnp.int32:
+    present = jnp.zeros(7, dtype=jnp.bool_).at[dice].set(True)
+    run_1234 = present[1] & present[2] & present[3] & present[4]
+    run_2345 = present[2] & present[3] & present[4] & present[5]
+    run_3456 = present[3] & present[4] & present[5] & present[6]
+    return jnp.where(run_1234 | run_2345 | run_3456, 30, 0)
+
+
+def _score_large_straight(dice: jnp.ndarray) -> jnp.int32:
+    present = jnp.zeros(7, dtype=jnp.bool_).at[dice].set(True)
+    low = present[1] & present[2] & present[3] & present[4] & present[5]
+    high = present[2] & present[3] & present[4] & present[5] & present[6]
+    return jnp.where(low | high, 40, 0)
+
+
+def _score_yahtzee(dice: jnp.ndarray) -> jnp.int32:
+    return jnp.where(jnp.all(dice == dice[0]), 50, 0)
+
+
+def _score_chance(dice: jnp.ndarray) -> jnp.int32:
+    return jnp.sum(dice)
+
+
+_SCORE_FNS = [
+    lambda d: _score_upper(d, 1),
+    lambda d: _score_upper(d, 2),
+    lambda d: _score_upper(d, 3),
+    lambda d: _score_upper(d, 4),
+    lambda d: _score_upper(d, 5),
+    lambda d: _score_upper(d, 6),
+    _score_three_of_a_kind,
+    _score_four_of_a_kind,
+    _score_full_house,
+    _score_small_straight,
+    _score_large_straight,
+    _score_yahtzee,
+    _score_chance,
+]
+
+
+def score_category(dice: jnp.ndarray, category: int) -> jnp.int32:
+    """Score dice for a single category. Pure, jit-compatible."""
+    return jax.lax.switch(category, _SCORE_FNS, dice)
+
+
+def compute_all_scores(dice: jnp.ndarray) -> jnp.ndarray:
+    """Compute scores for all 13 categories. Returns shape (13,)."""
+    return jnp.array([score_category(dice, i) for i in range(13)])
 
 
 def compute_valid_actions(
-    dice: list[int],
-    filled_mask: list[list[bool]],
-) -> list[tuple[int, int]]:
+    dice,
+    filled_mask,
+):
     """Return all valid (category, column) pairs given current dice and filled slots.
 
     Placement hierarchy:
@@ -67,27 +95,29 @@ def compute_valid_actions(
     2. If none: any unfilled slot (cross-out, score = 0)
 
     Args:
-        dice: Current dice values (list of 5 ints, 1-6).
+        dice: Current dice values (list of 5 ints 1-6 or jnp array).
         filled_mask: Shape [n_columns][n_categories]. filled_mask[col][cat] = True if filled.
 
     Returns:
         List of (category_index, column_index) tuples representing valid actions.
-        Returns an empty list when all slots are filled (terminal state).
-        Callers must check termination separately before acting on the result.
     """
+    from src.env.constants import N_CATEGORIES as _N_CATEGORIES
+    import numpy as _np
+
     n_cols = len(filled_mask)
-    n_cats = len(filled_mask[0]) if n_cols > 0 else N_CATEGORIES
+    n_cats = len(filled_mask[0]) if n_cols > 0 else _N_CATEGORIES
+
+    dice_arr = jnp.array(dice, dtype=jnp.int32)
 
     positive = [
         (cat, col)
         for col in range(n_cols)
         for cat in range(n_cats)
-        if not filled_mask[col][cat] and score_category(dice, cat) > 0
+        if not filled_mask[col][cat] and int(score_category(dice_arr, cat)) > 0
     ]
     if positive:
         return positive
 
-    # Forced cross-out: no positive-score slot exists anywhere
     return [
         (cat, col)
         for col in range(n_cols)
