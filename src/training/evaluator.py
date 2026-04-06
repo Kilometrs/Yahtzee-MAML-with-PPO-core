@@ -1,4 +1,5 @@
 """Evaluation: fine-tune meta-policy per task, collect trajectories."""
+import functools
 import os
 import jax
 import jax.numpy as jnp
@@ -6,9 +7,10 @@ import numpy as np
 import pandas as pd
 
 from src.agents.actor_critic import ActorCritic
+from src.agents.ppo import ppo_loss
 from src.env.yahtzee_env import env_reset, env_step, make_obs, get_action_mask
 from src.env.constants import N_DICE, PHASE_ROLL, PHASE_SCORE, UPPER_BONUS_THRESHOLD
-from src.meta.inner_loop import collect_episodes, prepare_ppo_data, inner_update_and_query_grad
+from src.meta.inner_loop import collect_episodes, prepare_ppo_data
 from src.tasks.reward_tasks import TASK_NAMES
 
 
@@ -21,6 +23,42 @@ class Evaluator:
             hidden_dim=config["agent"]["hidden_dim"],
             n_layers=config["agent"]["n_layers"],
             n_columns=self.n_columns)
+        self.inner_lr = config["meta"]["inner_lr"]
+        self.n_inner_steps = config["meta"]["n_inner_steps"]
+        n_parallel = config["meta"].get("n_parallel_envs", 1)
+        self.n_support_envs = max(n_parallel, 10)
+
+    def _adapt_params(self, meta_params, rng, task_id):
+        """Fine-tune meta-params on one support rollout for a task.
+
+        Mirrors the PyTorch evaluator: collect support episodes, compute GAE,
+        normalize advantages, run n_inner_steps of PPO gradient descent.
+
+        Returns adapted (fast) params.
+        """
+        support_traj = collect_episodes(
+            meta_params, self.model, rng, task_id,
+            self.n_support_envs, self.n_columns, self.max_steps)
+
+        support_data = prepare_ppo_data(support_traj)
+        obs_s, actions_s, phases_s, masks_s, lp_s, adv_s, ret_s = support_data
+
+        fast_params = jax.tree.map(jnp.copy, meta_params)
+        inner_lr = self.inner_lr
+
+        for _ in range(self.n_inner_steps):
+            loss, grads = jax.value_and_grad(ppo_loss)(
+                fast_params, self.model, obs_s, actions_s, phases_s,
+                masks_s, lp_s, adv_s, ret_s)
+            grads = jax.lax.stop_gradient(grads)
+            grad_norm = jnp.sqrt(jax.tree_util.tree_reduce(
+                lambda acc, g: acc + jnp.sum(g ** 2), grads, initializer=0.0))
+            scale = jnp.minimum(1.0, 1.0 / (grad_norm + 1e-8))
+            grads = jax.tree.map(lambda g: g * scale, grads)
+            fast_params = jax.tree.map(
+                lambda p, g: p - inner_lr * g, fast_params, grads)
+
+        return fast_params
 
     def _collect_eval_episode(self, params, rng, task_name, meta_step, ep_idx):
         """Collect one episode with detailed trajectory recording (Python loop)."""
@@ -114,16 +152,25 @@ class Evaluator:
         return step_rows, ep_row
 
     def evaluate(self, params, meta_step, n_episodes=100):
-        """Evaluate with meta params. Returns (df_steps, df_episodes)."""
+        """Evaluate with per-task adaptation. Returns (df_steps, df_episodes).
+
+        For each task:
+        1. Collect support episodes with meta-params
+        2. Run n_inner_steps of inner-loop adaptation (PPO on support data)
+        3. Collect n_episodes evaluation trajectories with adapted params
+        """
         all_step_rows = []
         all_ep_rows = []
         rng = jax.random.PRNGKey(meta_step)
 
         for task_id, task_name in enumerate(TASK_NAMES):
+            rng, adapt_rng = jax.random.split(rng)
+            adapted_params = self._adapt_params(params, adapt_rng, jnp.int32(task_id))
+
             for ep_idx in range(n_episodes):
                 rng, ep_rng = jax.random.split(rng)
                 step_rows, ep_row = self._collect_eval_episode(
-                    params, ep_rng, task_name, meta_step, ep_idx)
+                    adapted_params, ep_rng, task_name, meta_step, ep_idx)
                 all_step_rows.extend(step_rows)
                 all_ep_rows.append(ep_row)
 
