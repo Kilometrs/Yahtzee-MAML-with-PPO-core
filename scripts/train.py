@@ -39,7 +39,10 @@ def main():
     if args.resume:
         start_step = trainer.load_checkpoint(args.resume)
         print(f"Resumed from step {start_step}")
-    trainer.train(start_step=start_step)
+    try:
+        trainer.train(start_step=start_step)
+    finally:
+        trainer.logger.close()
 
 
 if __name__ == "__main__":

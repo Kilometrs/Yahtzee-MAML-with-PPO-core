@@ -10,6 +10,7 @@ from src.agents.actor_critic import ActorCritic
 from src.meta.maml import FOMAML
 from src.tasks.reward_tasks import TASK_NAMES
 from src.logging_utils.clearml_logger import ClearMLLogger
+from src.training.evaluator import Evaluator
 
 
 class MetaTrainer:
@@ -29,6 +30,9 @@ class MetaTrainer:
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         self.logger = ClearMLLogger(
             config["clearml"]["project_name"], config["clearml"]["task_name"], config)
+        self.evaluator = Evaluator(config)
+        self.eval_every = config["training"].get("eval_every", 0)
+        self.n_eval_episodes = config["training"].get("n_eval_episodes", 50)
 
     def train(self, start_step=0):
         n_meta_steps = self.config["meta"]["n_meta_steps"]
@@ -46,6 +50,8 @@ class MetaTrainer:
                 self.logger.log_scalar("task_loss", TASK_NAMES[i], tl, step)
             if (step + 1) % checkpoint_every == 0:
                 self.save_checkpoint(step + 1)
+            if self.eval_every and (step + 1) % self.eval_every == 0:
+                self._run_eval(step + 1)
 
     def save_checkpoint(self, meta_step):
         params_np = jax.device_get(self.meta_params)
@@ -65,7 +71,21 @@ class MetaTrainer:
             flat_opt[key] = np.asarray(v)
         np.savez(os.path.join(path, "opt_state.npz"), **flat_opt)
         np.savez(os.path.join(path, "meta.npz"), meta_step=meta_step, task_names=TASK_NAMES)
+        self.logger.log_artifact(f"checkpoint_step{meta_step}", path)
         return path
+
+    def _run_eval(self, meta_step):
+        df_steps, df_episodes = self.evaluator.evaluate(
+            self.meta_params, meta_step, n_episodes=self.n_eval_episodes)
+        mean_score = float(df_episodes["final_score"].mean())
+        self.logger.log_scalar("eval", "mean_final_score", mean_score, meta_step)
+        for task_name in TASK_NAMES:
+            task_mean = float(df_episodes[df_episodes["strategy"] == task_name]["final_score"].mean())
+            self.logger.log_scalar("eval_per_task", task_name, task_mean, meta_step)
+        steps_path, episodes_path = self.evaluator.save_trajectories(
+            df_steps, df_episodes, "all", meta_step)
+        self.logger.log_artifact(f"eval_steps_step{meta_step}", steps_path)
+        self.logger.log_artifact(f"eval_episodes_step{meta_step}", episodes_path)
 
     def load_checkpoint(self, path):
         meta_data = np.load(os.path.join(path, "meta.npz"), allow_pickle=True)
