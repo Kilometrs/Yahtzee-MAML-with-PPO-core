@@ -46,7 +46,7 @@ training:
   # Save a checkpoint every N meta-steps.
   checkpoint_every: 500
   # Run evaluation every N meta-steps (0 = disabled).
-  eval_every: 2500
+  eval_every: 1000
   # Number of episodes per opponent during eval. Higher = less noisy scores.
   n_eval_episodes: 200
   checkpoint_dir: /mnt/checkpoints/
