@@ -27,3 +27,4 @@ venv/
 .devcontainer/local-setup.sh
 .claude/
 _dev_trash
+output/*
