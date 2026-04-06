@@ -8,26 +8,49 @@ agent:
   n_layers: 3
 
 ppo:
+  # How aggressively the policy can change in one update.
+  # Lower = more conservative, more stable. Higher = faster but can diverge.
   clip_epsilon: 0.2
+  # Encourages exploration by penalising a too-certain policy.
+  # Raise if the agent gets stuck in repetitive behaviour.
   entropy_coef: 0.01
   value_loss_coef: 0.5
+  # Smoothing factor for advantage estimation (GAE). Higher = lower variance
+  # but more bias. 0.95 is a solid default.
   gae_lambda: 0.95
 
 meta:
-  inner_lr: 0.001
+  # LR for the inner loop — how fast the model adapts to a single task
+  # during the support phase. Too high → unstable per-task adaptation.
+  inner_lr: 0.0007
+  # LR for the outer (meta) optimizer (Adam). Controls how fast the shared
+  # meta-parameters are updated across tasks. Usually should be < inner_lr.
   outer_lr: 0.0003
-  n_inner_steps: 5
+  # Number of gradient steps taken in the inner loop per task per meta-step.
+  # More steps = better per-task adaptation, but slower and can overfit support.
+  n_inner_steps: 7
+  # How many tasks are sampled per meta-update. All 5 task types are used.
+  # Increasing beyond len(TASK_NAMES) has no effect.
   n_tasks_per_batch: 5
-  n_meta_steps: 50000
+  # Total number of meta-gradient steps to run.
+  n_meta_steps: 100000
+  # Parallel game episodes rolled out per task per inner step.
+  # Higher = lower gradient variance, more VRAM/CPU usage.
   n_parallel_envs: 50
 
 tasks:
+  # Score threshold the ThresholdBeater task tries to exceed each round.
   threshold_beater_score: 250
 
 training:
+  # Save a checkpoint every N meta-steps.
   checkpoint_every: 500
+  # Run evaluation every N meta-steps (0 = disabled).
+  eval_every: 2500
+  # Number of episodes per opponent during eval. Higher = less noisy scores.
+  n_eval_episodes: 200
   checkpoint_dir: /mnt/checkpoints/
 
 clearml:
   project_name: yahtzee-maml-server
-  task_name: server-run
+  task_name: pc-9900X-RTX3060
