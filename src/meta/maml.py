@@ -3,6 +3,8 @@ import jax
 import jax.numpy as jnp
 import optax
 
+from src.agents.a2c import a2c_loss
+from src.agents.ppo import ppo_loss
 from src.meta.inner_loop import (
     collect_all_episodes, prepare_all_ppo_data, all_inner_updates,
     # backward compat for evaluator / tests
@@ -15,6 +17,16 @@ class FOMAML:
     def __init__(self, model, config):
         self.model = model
         self.config = config
+
+        if "a2c" in config:
+            self.loss_fn = a2c_loss
+            algo_config = config["a2c"]
+        elif "ppo" in config:
+            self.loss_fn = ppo_loss
+            algo_config = config["ppo"]
+        else:
+            raise ValueError("Config must contain either 'a2c' or 'ppo' section")
+
         self.inner_lr = float(config["meta"]["inner_lr"])
         self.n_inner_steps = int(config["meta"]["n_inner_steps"])
         self.n_parallel_envs = config["meta"]["n_parallel_envs"]
@@ -22,7 +34,7 @@ class FOMAML:
         self.max_steps = config["env"]["max_steps_per_episode"]
         self.n_tasks = min(config["meta"]["n_tasks_per_batch"], len(TASK_NAMES))
         self.threshold = config["tasks"]["threshold_beater_score"]
-        self.gae_lambda = config["ppo"]["gae_lambda"]
+        self.gae_lambda = algo_config.get("gae_lambda", 0.95)
         self.optimizer = optax.adam(config["meta"]["outer_lr"])
 
         self._task_ids = jnp.arange(self.n_tasks, dtype=jnp.int32)
@@ -61,7 +73,7 @@ class FOMAML:
 
         # 3. Inner updates for all tasks (batched via vmap)
         all_grads, all_query_losses, all_inner_losses = all_inner_updates(
-            meta_params, self.model, all_support_data, all_query_data,
+            meta_params, self.model, self.loss_fn, all_support_data, all_query_data,
             self.inner_lr, self.n_inner_steps,
         )
 
