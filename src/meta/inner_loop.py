@@ -14,7 +14,8 @@ from src.agents.ppo import compute_gae, ppo_loss
 
 
 def _collect_episodes_single(params, model, rng_key, task_id,
-                             n_parallel_envs, n_columns, max_steps):
+                             n_parallel_envs, n_columns, max_steps,
+                             threshold=250):
     """Collect trajectories for ONE task. Not jit'd — called inside batched wrapper."""
     rng_key, init_rng = jax.random.split(rng_key)
     init_keys = jax.random.split(init_rng, n_parallel_envs)
@@ -38,8 +39,8 @@ def _collect_episodes_single(params, model, rng_key, task_id,
         ).squeeze(1)
 
         new_states, _, rewards, dones, _ = jax.vmap(
-            env_step, in_axes=(0, 0, None, None)
-        )(states, actions, task_id, n_columns)
+            env_step, in_axes=(0, 0, None, None, None)
+        )(states, actions, task_id, n_columns, threshold)
 
         reset_keys = jax.random.split(reset_rng, n_parallel_envs)
         reset_states, _ = jax.vmap(env_reset, in_axes=(0, None))(
@@ -67,16 +68,19 @@ def _collect_episodes_single(params, model, rng_key, task_id,
 
 @functools.partial(jax.jit, static_argnums=(1, 4, 5, 6))
 def collect_episodes(params, model, rng_key, task_id,
-                     n_parallel_envs, n_columns, max_steps):
+                     n_parallel_envs, n_columns, max_steps,
+                     threshold=250):
     """Collect episodes for a single task (backward compat)."""
     return _collect_episodes_single(
-        params, model, rng_key, task_id, n_parallel_envs, n_columns, max_steps
+        params, model, rng_key, task_id, n_parallel_envs, n_columns, max_steps,
+        threshold,
     )
 
 
 @functools.partial(jax.jit, static_argnums=(1, 5, 6, 7))
 def collect_all_episodes(params, model, support_rngs, query_rngs, task_ids,
-                         n_parallel_envs, n_columns, max_steps):
+                         n_parallel_envs, n_columns, max_steps,
+                         threshold=250):
     """Collect support + query episodes for all tasks in one JIT call.
 
     Args:
@@ -90,7 +94,8 @@ def collect_all_episodes(params, model, support_rngs, query_rngs, task_ids,
 
     def collect_one(rng, tid):
         return _collect_episodes_single(
-            params, model, rng, tid, n_parallel_envs, n_columns, max_steps
+            params, model, rng, tid, n_parallel_envs, n_columns, max_steps,
+            threshold,
         )
 
     support_trajs = jax.vmap(collect_one)(support_rngs, task_ids)

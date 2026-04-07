@@ -21,6 +21,7 @@ class FOMAML:
         self.n_columns = config["env"]["n_columns"]
         self.max_steps = config["env"]["max_steps_per_episode"]
         self.n_tasks = min(config["meta"]["n_tasks_per_batch"], len(TASK_NAMES))
+        self.threshold = config["tasks"]["threshold_beater_score"]
         self.gae_lambda = config["ppo"]["gae_lambda"]
         self.optimizer = optax.adam(config["meta"]["outer_lr"])
 
@@ -50,6 +51,7 @@ class FOMAML:
         support_trajs, query_trajs = collect_all_episodes(
             meta_params, self.model, support_rngs, query_rngs, self._task_ids,
             self.n_parallel_envs, self.n_columns, self.max_steps,
+            self.threshold,
         )
 
         # 2. Prepare PPO data for all tasks (batched)

@@ -92,7 +92,7 @@ class TestEvaluation:
         assert "final_score" in df_episodes.columns
         assert "strategy" in df_episodes.columns
         assert "n_turns" in df_episodes.columns
-        assert "beat_threshold_250" in df_episodes.columns
+        assert "beat_threshold" in df_episodes.columns
 
         # Sanity checks
         assert all(df_steps["phase"].isin(["roll", "score"]))

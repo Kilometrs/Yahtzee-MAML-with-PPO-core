@@ -101,7 +101,7 @@ def _compute_true_total(scores, yahtzee_bonus):
     return raw + upper_bonuses + yahtzee_bonus
 
 
-def _score_step(state, action, task_id, n_columns):
+def _score_step(state, action, task_id, n_columns, threshold):
     category = action // n_columns
     column = action % n_columns
 
@@ -135,7 +135,7 @@ def _score_step(state, action, task_id, n_columns):
         category=category, score_gained=score_val,
         done=done, final_score=new_total,
         yahtzee_bonus_delta=yahtzee_bonus_delta,
-        upper_crossed_63=newly_crossed_63, threshold=250,
+        upper_crossed_63=newly_crossed_63, threshold=threshold,
     )
 
     new_state = state._replace(
@@ -148,11 +148,11 @@ def _score_step(state, action, task_id, n_columns):
     return new_state, reward, done
 
 
-def env_step(state, action, task_id, n_columns):
+def env_step(state, action, task_id, n_columns, threshold=250):
     new_state, reward, done = jax.lax.cond(
         state.phase == PHASE_ROLL,
         lambda s, a, t: _roll_step(s, a, n_columns),
-        lambda s, a, t: _score_step(s, a, t, n_columns),
+        lambda s, a, t: _score_step(s, a, t, n_columns, threshold),
         state, action, task_id,
     )
     obs = make_obs(new_state, n_columns)

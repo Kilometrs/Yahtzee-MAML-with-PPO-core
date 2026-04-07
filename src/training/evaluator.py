@@ -15,7 +15,7 @@ from src.meta.inner_loop import collect_episodes, prepare_ppo_data
 from src.tasks.reward_tasks import TASK_NAMES
 
 
-def _build_batched_eval(model, n_columns, max_steps):
+def _build_batched_eval(model, n_columns, max_steps, threshold=250):
     """Build a JIT-compiled function that runs N eval episodes in parallel.
 
     Returns a function: (params, rngs) -> (traj, episode_summary)
@@ -44,7 +44,7 @@ def _build_batched_eval(model, n_columns, max_steps):
             top3_probs = probs[top3_idx]
 
             new_state, _, _, done_flag, _ = env_step(
-                state, action, jnp.int32(0), n_columns)
+                state, action, jnp.int32(0), n_columns, threshold)
 
             cat = action // n_columns
             col = action % n_columns
@@ -106,6 +106,7 @@ class Evaluator:
         self.config = config
         self.n_columns = config["env"]["n_columns"]
         self.max_steps = config["env"]["max_steps_per_episode"]
+        self.threshold = config["tasks"]["threshold_beater_score"]
         self.model = ActorCritic(
             hidden_dim=config["agent"]["hidden_dim"],
             n_layers=config["agent"]["n_layers"],
@@ -115,13 +116,14 @@ class Evaluator:
         n_parallel = config["meta"].get("n_parallel_envs", 1)
         self.n_support_envs = max(n_parallel, 10)
         self._batched_eval = _build_batched_eval(
-            self.model, self.n_columns, self.max_steps)
+            self.model, self.n_columns, self.max_steps, self.threshold)
 
     def _adapt_params(self, meta_params, rng, task_id):
         """Fine-tune meta-params on one support rollout for a task."""
         support_traj = collect_episodes(
             meta_params, self.model, rng, task_id,
-            self.n_support_envs, self.n_columns, self.max_steps)
+            self.n_support_envs, self.n_columns, self.max_steps,
+            self.threshold)
 
         support_data = prepare_ppo_data(support_traj)
         obs_s, actions_s, phases_s, masks_s, lp_s, adv_s, ret_s = support_data
@@ -167,7 +169,7 @@ class Evaluator:
 
             step_rows, ep_rows = _trajectories_to_dataframes(
                 traj_np, ep_np, task_name, meta_step, n_episodes,
-                self.n_columns, self.max_steps)
+                self.n_columns, self.max_steps, self.threshold)
             all_step_rows.extend(step_rows)
             all_ep_rows.extend(ep_rows)
 
@@ -187,7 +189,8 @@ class Evaluator:
 
 
 def _trajectories_to_dataframes(traj, ep_summary, task_name, meta_step,
-                                n_episodes, n_columns, max_steps):
+                                n_episodes, n_columns, max_steps,
+                                threshold=250):
     """Convert numpy trajectory arrays to row dicts for DataFrames."""
     step_rows = []
     ep_rows = []
@@ -262,7 +265,7 @@ def _trajectories_to_dataframes(traj, ep_summary, task_name, meta_step,
             "n_cross_outs": n_cross_outs,
             "n_zeros": n_zeros,
             "n_turns": turn,
-            "beat_threshold_250": final_score >= 250,
+            "beat_threshold": final_score >= threshold,
         })
 
     return step_rows, ep_rows
