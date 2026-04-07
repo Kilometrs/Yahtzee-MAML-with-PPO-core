@@ -49,12 +49,34 @@ def env_reset(rng_key, n_columns):
 
 
 def make_obs(state, n_columns):
+    sorted_dice = jnp.sort(state.dice)
+    dice_onehot = jax.nn.one_hot(sorted_dice - 1, N_SIDES).flatten()  # (30,)
+    bin_counts = jnp.zeros(N_SIDES, dtype=jnp.float32).at[sorted_dice - 1].add(1.0)  # (6,)
+    rolls_onehot = jax.nn.one_hot(state.rerolls, MAX_REROLLS + 1)  # (3,)
+
+    upper_sums = jnp.sum(state.scores[:6, :], axis=0).astype(jnp.float32)
+    upper_progress = jnp.minimum(upper_sums / UPPER_BONUS_THRESHOLD, 1.0)  # (n_cols,)
+
+    all_scores = compute_all_scores(sorted_dice)
+    upper_with_score = upper_sums + all_scores[:6, None]  # (6, n_cols) broadcast
+    lockin = (upper_with_score >= UPPER_BONUS_THRESHOLD).astype(jnp.float32)  # (6, n_cols)
+    lockin = lockin * (~state.filled_mask[:6, :]).astype(jnp.float32)
+    lockin_flat = lockin.flatten()  # (6*n_cols,)
+
+    n_filled = jnp.sum(state.filled_mask).astype(jnp.float32)
+    total_slots = N_CATEGORIES * n_columns
+    game_progress = jnp.array([n_filled / total_slots])  # (1,)
+
     return jnp.concatenate([
-        state.dice.astype(jnp.float32),
-        jnp.array([state.rerolls], dtype=jnp.float32),
-        state.filled_mask.flatten().astype(jnp.float32),
-        state.scores.flatten().astype(jnp.float32),
-        jnp.array([state.yahtzee_bonus], dtype=jnp.float32),
+        dice_onehot,                                           # 30
+        bin_counts,                                            # 6
+        rolls_onehot,                                          # 3
+        state.filled_mask.flatten().astype(jnp.float32),       # 13 * n_cols
+        state.scores.flatten().astype(jnp.float32),            # 13 * n_cols
+        jnp.array([state.yahtzee_bonus], dtype=jnp.float32),   # 1
+        upper_progress,                                        # n_cols
+        lockin_flat,                                           # 6 * n_cols
+        game_progress,                                         # 1
     ])
 
 

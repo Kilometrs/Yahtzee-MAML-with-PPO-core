@@ -35,3 +35,13 @@ UPPER_CATEGORIES = [ONES, TWOS, THREES, FOURS, FIVES, SIXES]
 # Phase encoding (int32 for JAX compatibility)
 PHASE_ROLL = 0
 PHASE_SCORE = 1
+
+
+def obs_dim(n_columns):
+    """Observation vector length: 41 + 33 * n_columns.
+
+    Components: sorted one-hot dice (30) + bin counts (6) + one-hot rolls (3)
+    + filled mask (13*n_cols) + scores (13*n_cols) + yahtzee bonus (1)
+    + upper bonus progress (n_cols) + lock-in (6*n_cols) + game progress (1).
+    """
+    return 41 + 33 * n_columns

@@ -4,12 +4,13 @@ import jax.numpy as jnp
 import pytest
 from src.env.yahtzee_env import EnvState, env_reset, env_step, make_obs, get_action_mask
 from src.env.constants import (
-    N_CATEGORIES, N_DICE, PHASE_ROLL, PHASE_SCORE, MAX_REROLLS,
+    N_CATEGORIES, N_DICE, N_SIDES, PHASE_ROLL, PHASE_SCORE, MAX_REROLLS,
+    obs_dim,
 )
 
 
 N_COLS = 6
-OBS_DIM = 7 + 26 * N_COLS  # 163
+OBS_DIM = obs_dim(N_COLS)  # 239
 
 
 class TestEnvReset:
@@ -64,11 +65,48 @@ class TestMakeObs:
         obs = make_obs(state, N_COLS)
         assert obs.shape == (OBS_DIM,)
 
-    def test_dice_in_obs(self):
+    def test_obs_dtype_float32(self):
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
         obs = make_obs(state, N_COLS)
-        assert jnp.array_equal(obs[:5], state.dice.astype(jnp.float32))
+        assert obs.dtype == jnp.float32
+
+
+class TestMakeObsFeatures:
+    def test_dice_onehot_section(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        dice_oh = obs[:30].reshape(5, 6)
+        assert jnp.allclose(jnp.sum(dice_oh, axis=1), 1.0)
+
+    def test_bin_counts_section(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        assert float(jnp.sum(obs[30:36])) == 5.0
+
+    def test_rolls_onehot_section(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        rolls = obs[36:39]
+        assert float(jnp.sum(rolls)) == 1.0
+        assert float(rolls[MAX_REROLLS]) == 1.0
+
+    def test_game_progress_starts_zero(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        assert float(obs[-1]) == 0.0
+
+    def test_upper_progress_starts_zero(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        offset = 39 + 26 * N_COLS + 1
+        upper_progress = obs[offset:offset + N_COLS]
+        assert jnp.allclose(upper_progress, 0.0)
 
 
 class TestGetActionMask:
