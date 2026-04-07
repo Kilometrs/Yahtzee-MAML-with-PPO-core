@@ -10,7 +10,8 @@ import jax
 import jax.numpy as jnp
 
 from src.env.yahtzee_env import env_reset, env_step, make_obs, get_action_mask
-from src.agents.ppo import compute_gae, ppo_loss
+from src.agents.common import compute_gae
+from src.agents.ppo import ppo_loss
 
 
 def _collect_episodes_single(params, model, rng_key, task_id,
