@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 from src.agents.actor_critic import ActorCritic
+from src.agents.ppo import ppo_loss
 from src.meta.inner_loop import collect_episodes, inner_update_and_query_grad, prepare_ppo_data
 
 N_COLS = 6
@@ -86,7 +87,7 @@ class TestInnerUpdateAndQueryGrad:
         query_data = prepare_ppo_data(query_traj)
         config = {"inner_lr": 0.001, "n_inner_steps": 3}
         grads, query_loss, inner_losses = inner_update_and_query_grad(
-            params, model, support_data, query_data, config)
+            params, model, ppo_loss, support_data, query_data, config)
         grad_leaves = jax.tree.leaves(grads)
         param_leaves = jax.tree.leaves(params)
         assert len(grad_leaves) == len(param_leaves)
@@ -106,6 +107,6 @@ class TestInnerUpdateAndQueryGrad:
         query_data = prepare_ppo_data(query_traj)
         config = {"inner_lr": 0.01, "n_inner_steps": 5}
         grads, _, _ = inner_update_and_query_grad(
-            params, model, support_data, query_data, config)
+            params, model, ppo_loss, support_data, query_data, config)
         has_nonzero = any(jnp.any(g != 0) for g in jax.tree.leaves(grads))
         assert has_nonzero

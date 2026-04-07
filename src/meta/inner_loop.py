@@ -11,7 +11,6 @@ import jax.numpy as jnp
 
 from src.env.yahtzee_env import env_reset, env_step, make_obs, get_action_mask
 from src.agents.common import compute_gae
-from src.agents.ppo import ppo_loss
 
 
 def _collect_episodes_single(params, model, rng_key, task_id,
@@ -151,7 +150,7 @@ def prepare_all_ppo_data(support_trajs, query_trajs):
     return support_data, query_data
 
 
-def _inner_update_single(meta_params, model, support_data, query_data,
+def _inner_update_single(meta_params, model, loss_fn, support_data, query_data,
                          inner_lr, n_inner_steps):
     """Inner adaptation + query grad for one task."""
     obs_s, actions_s, phases_s, masks_s, lp_s, adv_s, ret_s = support_data
@@ -159,7 +158,7 @@ def _inner_update_single(meta_params, model, support_data, query_data,
     fast_params = jax.tree.map(jnp.copy, meta_params)
 
     def inner_step(fast_params, _):
-        loss, grads = jax.value_and_grad(ppo_loss)(
+        loss, grads = jax.value_and_grad(loss_fn)(
             fast_params, model, obs_s, actions_s, phases_s,
             masks_s, lp_s, adv_s, ret_s,
         )
@@ -179,33 +178,33 @@ def _inner_update_single(meta_params, model, support_data, query_data,
     )
 
     obs_q, actions_q, phases_q, masks_q, lp_q, adv_q, ret_q = query_data
-    query_loss, query_grads = jax.value_and_grad(ppo_loss)(
+    query_loss, query_grads = jax.value_and_grad(loss_fn)(
         fast_params, model, obs_q, actions_q, phases_q,
         masks_q, lp_q, adv_q, ret_q,
     )
     return query_grads, query_loss, inner_losses
 
 
-@functools.partial(jax.jit, static_argnums=(1, 4, 5))
-def _inner_update_and_query_grad_jit(meta_params, model, support_data, query_data,
+@functools.partial(jax.jit, static_argnums=(1, 2, 5, 6))
+def _inner_update_and_query_grad_jit(meta_params, model, loss_fn, support_data, query_data,
                                      inner_lr, n_inner_steps):
     """Single-task inner update (backward compat)."""
     return _inner_update_single(
-        meta_params, model, support_data, query_data, inner_lr, n_inner_steps
+        meta_params, model, loss_fn, support_data, query_data, inner_lr, n_inner_steps
     )
 
 
-def inner_update_and_query_grad(meta_params, model, support_data, query_data, config):
+def inner_update_and_query_grad(meta_params, model, loss_fn, support_data, query_data, config):
     """Run inner adaptation, return query gradient. FOMAML (first-order)."""
     inner_lr = float(config["inner_lr"])
     n_inner_steps = int(config["n_inner_steps"])
     return _inner_update_and_query_grad_jit(
-        meta_params, model, support_data, query_data, inner_lr, n_inner_steps
+        meta_params, model, loss_fn, support_data, query_data, inner_lr, n_inner_steps
     )
 
 
-@functools.partial(jax.jit, static_argnums=(1, 4, 5))
-def all_inner_updates(meta_params, model, all_support_data, all_query_data,
+@functools.partial(jax.jit, static_argnums=(1, 2, 5, 6))
+def all_inner_updates(meta_params, model, loss_fn, all_support_data, all_query_data,
                       inner_lr, n_inner_steps):
     """Run inner updates for ALL tasks at once via vmap.
 
@@ -219,7 +218,7 @@ def all_inner_updates(meta_params, model, all_support_data, all_query_data,
     """
     def per_task(s_data, q_data):
         return _inner_update_single(
-            meta_params, model, s_data, q_data, inner_lr, n_inner_steps
+            meta_params, model, loss_fn, s_data, q_data, inner_lr, n_inner_steps
         )
 
     return jax.vmap(per_task)(all_support_data, all_query_data)
