@@ -68,7 +68,7 @@ class FOMAML:
 
         # 2. Prepare PPO data for all tasks (batched)
         all_support_data, all_query_data = prepare_all_ppo_data(
-            support_trajs, query_trajs,
+            support_trajs, query_trajs, self.gae_lambda,
         )
 
         # 3. Inner updates for all tasks (batched via vmap)
