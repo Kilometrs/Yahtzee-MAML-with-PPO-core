@@ -180,8 +180,8 @@ class Evaluator:
         df_episodes = pd.DataFrame(all_ep_rows)
         return df_steps, df_episodes
 
-    def save_trajectories(self, df_steps, df_episodes, strategy, meta_step):
-        out_dir = self.config["training"]["checkpoint_dir"]
+    def save_trajectories(self, df_steps, df_episodes, strategy, meta_step, out_dir=None):
+        out_dir = out_dir or self.config["training"].get("checkpoint_dir", "checkpoints")
         steps_path = os.path.join(
             out_dir, f"eval_steps_{strategy}_{meta_step}.parquet")
         episodes_path = os.path.join(

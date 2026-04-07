@@ -30,10 +30,12 @@ class MetaTrainer:
         self.meta_params = self.model.init(init_rng, jnp.zeros(od), jnp.int32(0))
         self.fomaml = FOMAML(self.model, config)
         self.opt_state = self.fomaml.init_optimizer(self.meta_params)
-        self.checkpoint_dir = config["training"]["checkpoint_dir"]
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
         self.logger = ClearMLLogger(
             config["clearml"]["project_name"], config["clearml"]["task_name"], config)
+        base_dir = config["training"].get("checkpoint_dir", "checkpoints")
+        self.checkpoint_dir = os.path.join(base_dir, self.logger.task_id)
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        print(f"Checkpoints: {self.checkpoint_dir}")
         self.evaluator = Evaluator(config)
         self.eval_every = config["training"].get("eval_every", 0)
         self.n_eval_episodes = config["training"].get("n_eval_episodes", 50)
@@ -87,7 +89,7 @@ class MetaTrainer:
             task_mean = float(df_episodes[df_episodes["strategy"] == task_name]["final_score"].mean())
             self.logger.log_scalar("eval_per_task", task_name, task_mean, meta_step)
         steps_path, episodes_path = self.evaluator.save_trajectories(
-            df_steps, df_episodes, "all", meta_step)
+            df_steps, df_episodes, "all", meta_step, out_dir=self.checkpoint_dir)
         self.logger.log_artifact(f"eval_steps_step{meta_step}", steps_path)
         self.logger.log_artifact(f"eval_episodes_step{meta_step}", episodes_path)
 
