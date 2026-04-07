@@ -43,6 +43,7 @@ def main():
         trainer.train(start_step=start_step)
     finally:
         trainer.logger.close()
+    print("Training complete.")
 
 
 if __name__ == "__main__":
