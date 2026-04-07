@@ -103,13 +103,13 @@ def collect_all_episodes(params, model, support_rngs, query_rngs, task_ids,
     return support_trajs, query_trajs
 
 
-def _prepare_one(traj, gae_lambda=0.95):
-    """Prepare PPO data for one task's trajectory."""
+def _prepare_one(traj, gamma=0.99, gae_lambda=0.95):
+    """Prepare PPO/A2C data for one task's trajectory."""
     obs, actions, log_probs, rewards, dones, values, phases, masks = traj
     max_steps, n_envs = rewards.shape
 
     batched_gae = jax.vmap(compute_gae, in_axes=(1, 1, 1, None, None), out_axes=1)
-    advantages, returns = batched_gae(rewards, values, dones, 0.99, gae_lambda)
+    advantages, returns = batched_gae(rewards, values, dones, gamma, gae_lambda)
 
     T = max_steps * n_envs
     obs_flat = obs.reshape(T, -1)
@@ -130,23 +130,24 @@ def _prepare_one(traj, gae_lambda=0.95):
 
 @jax.jit
 def prepare_ppo_data(trajectories, gamma=0.99, lam=0.95):
-    """Prepare PPO data for a single task trajectory (backward compat)."""
-    return _prepare_one(trajectories, gae_lambda=lam)
+    """Prepare data for a single task trajectory (backward compat)."""
+    return _prepare_one(trajectories, gamma=gamma, gae_lambda=lam)
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
-def prepare_all_ppo_data(support_trajs, query_trajs, gae_lambda=0.95):
-    """Prepare PPO data for all tasks at once.
+@functools.partial(jax.jit, static_argnums=(2, 3))
+def prepare_all_ppo_data(support_trajs, query_trajs, gamma=0.99, gae_lambda=0.95):
+    """Prepare PPO/A2C data for all tasks at once.
 
     Args:
         support_trajs: tuple of (max_steps, n_tasks, n_envs, ...) from collect_all_episodes
         query_trajs: same
-        gae_lambda: GAE lambda parameter
+        gamma: discount factor (1.0 for A2C per Pape 2025)
+        gae_lambda: GAE lambda parameter (0.0 = TD(0) for A2C)
     Returns:
         support_data: tuple of (n_tasks, T, ...) arrays
         query_data: same
     """
-    prep = lambda traj: _prepare_one(traj, gae_lambda=gae_lambda)
+    prep = lambda traj: _prepare_one(traj, gamma=gamma, gae_lambda=gae_lambda)
     support_data = jax.vmap(prep)(support_trajs)
     query_data = jax.vmap(prep)(query_trajs)
     return support_data, query_data

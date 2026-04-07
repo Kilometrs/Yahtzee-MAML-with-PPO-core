@@ -34,6 +34,7 @@ class FOMAML:
         self.max_steps = config["env"]["max_steps_per_episode"]
         self.n_tasks = min(config["meta"]["n_tasks_per_batch"], len(TASK_NAMES))
         self.threshold = config["tasks"]["threshold_beater_score"]
+        self.gamma = algo_config.get("gamma", 0.99)
         self.gae_lambda = algo_config.get("gae_lambda", 0.95)
         self.optimizer = optax.adam(config["meta"]["outer_lr"])
 
@@ -66,9 +67,9 @@ class FOMAML:
             self.threshold,
         )
 
-        # 2. Prepare PPO data for all tasks (batched)
+        # 2. Prepare PPO/A2C data for all tasks (batched)
         all_support_data, all_query_data = prepare_all_ppo_data(
-            support_trajs, query_trajs, self.gae_lambda,
+            support_trajs, query_trajs, self.gamma, self.gae_lambda,
         )
 
         # 3. Inner updates for all tasks (batched via vmap)
