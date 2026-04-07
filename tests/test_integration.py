@@ -15,8 +15,8 @@ from src.env.constants import PHASE_ROLL, PHASE_SCORE, N_DICE, obs_dim as _obs_d
 
 SMALL_CONFIG = {
     "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 100},
-    "agent": {"hidden_dim": 32, "n_layers": 1},
-    "ppo": {"clip_epsilon": 0.2, "entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.95},
+    "agent": {"hidden_dim": 32, "n_layers": 1, "use_layer_norm": False, "activation": "relu"},
+    "ppo": {"clip_epsilon": 0.2, "entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.95, "gamma": 0.99},
     "meta": {"inner_lr": 0.001, "outer_lr": 0.0003, "n_inner_steps": 2,
              "n_tasks_per_batch": 2, "n_meta_steps": 10, "n_parallel_envs": 2},
     "tasks": {"threshold_beater_score": 250},
@@ -26,8 +26,8 @@ SMALL_CONFIG = {
 
 SMALL_A2C_CONFIG = {
     "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 100},
-    "agent": {"hidden_dim": 32, "n_layers": 1},
-    "a2c": {"entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.0},
+    "agent": {"hidden_dim": 32, "n_layers": 1, "use_layer_norm": True, "activation": "swish"},
+    "a2c": {"entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.0, "gamma": 1.0},
     "meta": {"inner_lr": 0.001, "outer_lr": 0.0003, "n_inner_steps": 1,
              "n_tasks_per_batch": 2, "n_meta_steps": 10, "n_parallel_envs": 2},
     "tasks": {"threshold_beater_score": 250},
