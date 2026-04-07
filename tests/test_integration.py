@@ -24,10 +24,39 @@ SMALL_CONFIG = {
     "clearml": {"project_name": "test", "task_name": "test"},
 }
 
+SMALL_A2C_CONFIG = {
+    "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 100},
+    "agent": {"hidden_dim": 32, "n_layers": 1},
+    "a2c": {"entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.0},
+    "meta": {"inner_lr": 0.001, "outer_lr": 0.0003, "n_inner_steps": 1,
+             "n_tasks_per_batch": 2, "n_meta_steps": 10, "n_parallel_envs": 2},
+    "tasks": {"threshold_beater_score": 250},
+    "training": {"checkpoint_every": 5, "checkpoint_dir": ""},
+    "clearml": {"project_name": "test", "task_name": "test"},
+}
+
 
 class TestMetaTraining:
     def test_10_meta_steps(self):
         config = SMALL_CONFIG
+        model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
+        rng = jax.random.PRNGKey(42)
+        rng, init_rng = jax.random.split(rng)
+        obs_dim = 7 + 26 * 3
+        params = model.init(init_rng, jnp.zeros(obs_dim), jnp.int32(0))
+        fomaml = FOMAML(model, config)
+        opt_state = fomaml.init_optimizer(params)
+        losses = []
+        for step in range(10):
+            result = fomaml.meta_update(params, opt_state, rng)
+            params, opt_state, rng, meta_loss, task_losses, skipped = result
+            if not skipped:
+                losses.append(meta_loss)
+        assert len(losses) > 0
+        assert all(np.isfinite(l) for l in losses)
+
+    def test_10_meta_steps_a2c(self):
+        config = SMALL_A2C_CONFIG
         model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
         rng = jax.random.PRNGKey(42)
         rng, init_rng = jax.random.split(rng)
