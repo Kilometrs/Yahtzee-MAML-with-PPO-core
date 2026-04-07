@@ -3,19 +3,22 @@ import jax
 import jax.numpy as jnp
 import pytest
 from src.agents.actor_critic import ActorCritic
+from src.env.constants import obs_dim
 
 N_COLS = 6
-OBS_DIM = 7 + 26 * N_COLS
+OBS_DIM = obs_dim(N_COLS)  # 239 (41 + 33*6)
 MAX_ACTIONS = max(32, 13 * N_COLS)
 
 
 class TestActorCriticInit:
     def test_instantiates(self):
-        model = ActorCritic(hidden_dim=256, n_layers=3, n_columns=N_COLS)
+        model = ActorCritic(hidden_dim=600, n_layers=2, n_columns=N_COLS,
+                            use_layer_norm=True, activation="swish")
         assert model is not None
 
     def test_init_params(self):
-        model = ActorCritic(hidden_dim=256, n_layers=3, n_columns=N_COLS)
+        model = ActorCritic(hidden_dim=600, n_layers=2, n_columns=N_COLS,
+                            use_layer_norm=True, activation="swish")
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
         assert "params" in params
@@ -24,7 +27,8 @@ class TestActorCriticInit:
 class TestActorCriticForward:
     @pytest.fixture
     def model_and_params(self):
-        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS)
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            use_layer_norm=True, activation="swish")
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
         return model, params
@@ -50,6 +54,11 @@ class TestActorCriticForward:
         model, params = model_and_params
         logits, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(1))
         assert jnp.all(jnp.isfinite(logits))
+
+    def test_value_is_finite(self, model_and_params):
+        model, params = model_and_params
+        _, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert jnp.isfinite(value)
 
     def test_jittable(self, model_and_params):
         model, params = model_and_params
