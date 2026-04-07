@@ -31,7 +31,6 @@ class ClearMLLogger:
         task.connect(config)
         self._task = task
         self._logger = task.get_logger()
-        self._logger.set_flush_period(120)
 
     @property
     def task_id(self) -> str:
