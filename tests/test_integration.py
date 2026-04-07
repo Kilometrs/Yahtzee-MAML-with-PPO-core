@@ -10,7 +10,7 @@ from src.meta.maml import FOMAML
 from src.training.evaluator import Evaluator
 from src.tasks.reward_tasks import TASK_NAMES
 from src.env.yahtzee_env import env_reset, env_step, get_action_mask
-from src.env.constants import PHASE_ROLL, PHASE_SCORE, N_DICE
+from src.env.constants import PHASE_ROLL, PHASE_SCORE, N_DICE, obs_dim as _obs_dim
 
 
 SMALL_CONFIG = {
@@ -42,8 +42,8 @@ class TestMetaTraining:
         model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
         rng = jax.random.PRNGKey(42)
         rng, init_rng = jax.random.split(rng)
-        obs_dim = 7 + 26 * 3
-        params = model.init(init_rng, jnp.zeros(obs_dim), jnp.int32(0))
+        od = _obs_dim(3)
+        params = model.init(init_rng, jnp.zeros(od), jnp.int32(0))
         fomaml = FOMAML(model, config)
         opt_state = fomaml.init_optimizer(params)
         losses = []
@@ -60,8 +60,8 @@ class TestMetaTraining:
         model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
         rng = jax.random.PRNGKey(42)
         rng, init_rng = jax.random.split(rng)
-        obs_dim = 7 + 26 * 3
-        params = model.init(init_rng, jnp.zeros(obs_dim), jnp.int32(0))
+        od = _obs_dim(3)
+        params = model.init(init_rng, jnp.zeros(od), jnp.int32(0))
         fomaml = FOMAML(model, config)
         opt_state = fomaml.init_optimizer(params)
         losses = []
@@ -79,8 +79,8 @@ class TestCheckpoint:
         """Verify params can be saved and loaded back identically."""
         model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
         rng = jax.random.PRNGKey(42)
-        obs_dim = 7 + 26 * 3
-        params = model.init(rng, jnp.zeros(obs_dim), jnp.int32(0))
+        od = _obs_dim(3)
+        params = model.init(rng, jnp.zeros(od), jnp.int32(0))
 
         # Save
         flat = {}
@@ -106,8 +106,8 @@ class TestEvaluation:
         config = SMALL_CONFIG
         model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
         rng = jax.random.PRNGKey(42)
-        obs_dim = 7 + 26 * 3
-        params = model.init(rng, jnp.zeros(obs_dim), jnp.int32(0))
+        od = _obs_dim(3)
+        params = model.init(rng, jnp.zeros(od), jnp.int32(0))
         evaluator = Evaluator(config)
         df_steps, df_episodes = evaluator.evaluate(params, meta_step=0, n_episodes=2)
 

@@ -4,9 +4,10 @@ import jax.numpy as jnp
 import pytest
 from src.agents.ppo import compute_gae, ppo_loss
 from src.agents.actor_critic import ActorCritic
+from src.env.constants import obs_dim
 
 N_COLS = 6
-OBS_DIM = 7 + 26 * N_COLS
+OBS_DIM = obs_dim(N_COLS)
 MAX_ACTIONS = max(32, 13 * N_COLS)
 
 
