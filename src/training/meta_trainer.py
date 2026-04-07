@@ -20,7 +20,10 @@ class MetaTrainer:
         self.model = ActorCritic(
             hidden_dim=config["agent"]["hidden_dim"],
             n_layers=config["agent"]["n_layers"],
-            n_columns=config["env"]["n_columns"])
+            n_columns=config["env"]["n_columns"],
+            use_layer_norm=config["agent"].get("use_layer_norm", False),
+            activation=config["agent"].get("activation", "relu"),
+        )
         self.rng = jax.random.PRNGKey(config["env"]["seed"])
         self.rng, init_rng = jax.random.split(self.rng)
         od = obs_dim(config["env"]["n_columns"])
@@ -34,7 +37,6 @@ class MetaTrainer:
         self.evaluator = Evaluator(config)
         self.eval_every = config["training"].get("eval_every", 0)
         self.n_eval_episodes = config["training"].get("n_eval_episodes", 50)
-        self.log_every = config["training"].get("log_every", 10)
 
     def train(self, start_step=0):
         n_meta_steps = self.config["meta"]["n_meta_steps"]
@@ -47,10 +49,9 @@ class MetaTrainer:
                 pbar.set_postfix({"loss": "NaN (skipped)"})
                 continue
             pbar.set_postfix({"loss": f"{meta_loss:.4f}"})
-            if step % self.log_every == 0:
-                self.logger.log_scalar("meta", "loss", meta_loss, step)
-                for i, tl in enumerate(task_losses):
-                    self.logger.log_scalar("task_loss", TASK_NAMES[i], tl, step)
+            self.logger.log_scalar("meta", "loss", meta_loss, step)
+            for i, tl in enumerate(task_losses):
+                self.logger.log_scalar("task_loss", TASK_NAMES[i], tl, step)
             if (step + 1) % checkpoint_every == 0:
                 self.save_checkpoint(step + 1)
             if self.eval_every and (step + 1) % self.eval_every == 0:

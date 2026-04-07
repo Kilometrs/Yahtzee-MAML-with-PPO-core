@@ -4,14 +4,16 @@ env:
   max_steps_per_episode: 50
 
 agent:
-  hidden_dim: 128
+  hidden_dim: 600
   n_layers: 2
+  use_layer_norm: true
+  activation: swish
 
 a2c:
-  entropy_coef: 0.01
+  entropy_coef: 0.03
   value_loss_coef: 0.5
-  gae_lambda: 0.0   # TD(0) — paper finding
-  gamma: 1.0         # No discounting — maximize total score
+  gae_lambda: 0.0
+  gamma: 1.0
 
 meta:
   inner_lr: 0.001
@@ -22,7 +24,6 @@ meta:
   n_parallel_envs: 50
 
 tasks:
-  # For 1 column, decent play ~230.
   threshold_beater_score: 200
 
 training:

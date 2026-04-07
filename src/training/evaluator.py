@@ -110,7 +110,10 @@ class Evaluator:
         self.model = ActorCritic(
             hidden_dim=config["agent"]["hidden_dim"],
             n_layers=config["agent"]["n_layers"],
-            n_columns=self.n_columns)
+            n_columns=self.n_columns,
+            use_layer_norm=config["agent"].get("use_layer_norm", False),
+            activation=config["agent"].get("activation", "relu"),
+        )
         self.inner_lr = config["meta"]["inner_lr"]
         self.n_inner_steps = config["meta"]["n_inner_steps"]
         n_parallel = config["meta"].get("n_parallel_envs", 1)

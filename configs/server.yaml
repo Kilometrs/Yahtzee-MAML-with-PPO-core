@@ -6,6 +6,8 @@ env:
 agent:
   hidden_dim: 256
   n_layers: 3
+  use_layer_norm: false
+  activation: relu
 
 ppo:
   # How aggressively the policy can change in one update.
@@ -20,6 +22,7 @@ ppo:
   # Smoothing factor for advantage estimation (GAE). Higher = lower variance
   # but more bias. 0.95 is a solid default.
   gae_lambda: 0.95
+  gamma: 0.99
 
 meta:
   # LR for the inner loop — how fast the model adapts to a single task
