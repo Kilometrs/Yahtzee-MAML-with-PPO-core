@@ -1,0 +1,34 @@
+env:
+  n_columns: 6
+  seed: 42
+  max_steps_per_episode: 250
+
+agent:
+  hidden_dim: 256
+  n_layers: 3
+
+a2c:
+  entropy_coef: 0.01
+  value_loss_coef: 0.5
+  gae_lambda: 0.0
+
+meta:
+  inner_lr: 0.0007
+  outer_lr: 0.0003
+  n_inner_steps: 1
+  n_tasks_per_batch: 6
+  n_meta_steps: 100000
+  n_parallel_envs: 50
+
+tasks:
+  threshold_beater_score: 1400
+
+training:
+  checkpoint_every: 500
+  eval_every: 2500
+  n_eval_episodes: 200
+  checkpoint_dir: /mnt/checkpoints/
+
+clearml:
+  project_name: yahtzee-maml-server-a2c
+  task_name: pc-9900X-RTX3060
