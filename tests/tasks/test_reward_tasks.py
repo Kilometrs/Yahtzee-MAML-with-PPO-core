@@ -2,10 +2,11 @@
 import jax
 import jax.numpy as jnp
 import pytest
+import src.env  # noqa: F401 — force env init before tasks (breaks circular import)
 from src.tasks.reward_tasks import (
     TASK_NAMES, reward_max_score, reward_threshold_beater,
     reward_upper_bonus, reward_yahtzee_hunter, reward_conservative,
-    compute_reward,
+    reward_expected_value, compute_reward,
 )
 from src.env.constants import YAHTZEE
 
@@ -14,11 +15,11 @@ class TestTaskRegistry:
     def test_task_names(self):
         assert TASK_NAMES == [
             "MaxScore", "ThresholdBeater", "UpperBonus",
-            "YahtzeeHunter", "Conservative",
+            "YahtzeeHunter", "Conservative", "ExpectedValue",
         ]
 
     def test_task_count(self):
-        assert len(TASK_NAMES) == 5
+        assert len(TASK_NAMES) == 6
 
 
 class TestMaxScore:
@@ -112,6 +113,29 @@ class TestConservative:
         assert float(r) == -1.0
 
 
+class TestExpectedValue:
+    def test_above_expected(self):
+        # Yahtzee scored (50): (50 - 2.3) / 2.3 ≈ 20.74
+        r = reward_expected_value(prev_total=0, new_total=0, category=YAHTZEE,
+                                  score_gained=50, done=False, final_score=0,
+                                  yahtzee_bonus_delta=0, upper_crossed_63=False)
+        assert float(r) == pytest.approx((50 - 2.3) / 2.3, rel=1e-3)
+
+    def test_crossout_negative(self):
+        # Cross-out on Chance (0): (0 - 20.0) / 20.0 = -1.0
+        r = reward_expected_value(prev_total=0, new_total=0, category=12,
+                                  score_gained=0, done=False, final_score=0,
+                                  yahtzee_bonus_delta=0, upper_crossed_63=False)
+        assert float(r) == pytest.approx(-1.0)
+
+    def test_at_expected(self):
+        # Scoring exactly expected for Threes (6.3): reward ≈ 0
+        r = reward_expected_value(prev_total=0, new_total=0, category=2,
+                                  score_gained=6.3, done=False, final_score=0,
+                                  yahtzee_bonus_delta=0, upper_crossed_63=False)
+        assert float(r) == pytest.approx(0.0, abs=1e-4)
+
+
 class TestComputeReward:
     def test_dispatch_by_task_id(self):
         kwargs = dict(prev_total=100, new_total=120, category=0,
@@ -121,10 +145,18 @@ class TestComputeReward:
         r0 = compute_reward(task_id=0, **kwargs)
         assert float(r0) == pytest.approx(20.0 / 50.0)
 
+    def test_dispatch_expected_value(self):
+        kwargs = dict(prev_total=0, new_total=50, category=YAHTZEE,
+                      score_gained=50, done=False, final_score=0,
+                      yahtzee_bonus_delta=0, upper_crossed_63=False,
+                      threshold=250)
+        r5 = compute_reward(task_id=5, **kwargs)
+        assert float(r5) == pytest.approx((50 - 2.3) / 2.3, rel=1e-3)
+
     def test_is_jittable(self):
         jitted = jax.jit(compute_reward, static_argnums=())
-        r = jitted(task_id=4, prev_total=0, new_total=0, category=0,
-                   score_gained=5, done=False, final_score=0,
+        r = jitted(task_id=5, prev_total=0, new_total=0, category=12,
+                   score_gained=0, done=False, final_score=0,
                    yahtzee_bonus_delta=0, upper_crossed_63=False,
                    threshold=250)
-        assert float(r) == 1.0
+        assert float(r) == pytest.approx(-1.0)
