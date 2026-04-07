@@ -31,6 +31,7 @@ class ClearMLLogger:
         task.connect(config)
         self._task = task
         self._logger = task.get_logger()
+        self._logger.set_flush_period(120)
 
     @property
     def task_id(self) -> str:
@@ -66,5 +67,11 @@ class ClearMLLogger:
         self._logger.report_matplotlib_figure(title=title, series=title, figure=figure, iteration=0)
 
     def close(self) -> None:
-        """Finalise and close the ClearML task."""
+        """Flush all pending data and close the ClearML task."""
+        print("Flushing metrics...")
+        self._logger.flush()
+        print("Waiting for artifact uploads...")
+        self._task.flush(wait_for_uploads=True)
+        print(f"Closing ClearML task {self._task.id}")
         self._task.close()
+        print("ClearML task closed.")
