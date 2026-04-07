@@ -8,6 +8,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -71,7 +72,7 @@ def fetch_experiment(task_id: str, output_dir: Path) -> None:
             if local_path:
                 src = Path(local_path)
                 dest = artifacts_dir / src.name
-                src.replace(dest)
+                shutil.move(str(src), str(dest))
                 # Convert parquet to JSON for easier inspection
                 if dest.suffix == ".parquet":
                     try:
