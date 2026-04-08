@@ -1,4 +1,5 @@
 """Yahtzee game constants and category index definitions."""
+import jax.numpy as jnp
 
 N_DICE = 5
 N_SIDES = 6
@@ -36,12 +37,19 @@ UPPER_CATEGORIES = [ONES, TWOS, THREES, FOURS, FIVES, SIXES]
 PHASE_ROLL = 0
 PHASE_SCORE = 1
 
+# Maximum achievable score per category (for normalizing potential scores)
+MAX_CATEGORY_SCORES = jnp.array([
+    5, 10, 15, 20, 25, 30,   # Ones..Sixes
+    30, 30, 25, 30, 40, 50, 30,  # 3oK, 4oK, FH, SS, LS, Yahtzee, Chance
+], dtype=jnp.float32)
+
 
 def obs_dim(n_columns):
-    """Observation vector length: 41 + 33 * n_columns.
+    """Observation vector length: 57 + 33 * n_columns.
 
     Components: sorted one-hot dice (30) + bin counts (6) + one-hot rolls (3)
+    + potential scores (13) + joker indicator (1) + phase (1) + has_yahtzee (1)
     + filled mask (13*n_cols) + scores (13*n_cols) + yahtzee bonus (1)
     + upper bonus progress (n_cols) + lock-in (6*n_cols) + game progress (1).
     """
-    return 41 + 33 * n_columns
+    return 57 + 33 * n_columns

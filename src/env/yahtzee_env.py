@@ -10,7 +10,7 @@ from typing import NamedTuple, Tuple
 from src.env.constants import (
     N_DICE, N_SIDES, N_CATEGORIES, MAX_REROLLS,
     UPPER_BONUS_THRESHOLD, UPPER_BONUS_VALUE, YAHTZEE_BONUS_VALUE,
-    YAHTZEE, PHASE_ROLL, PHASE_SCORE,
+    YAHTZEE, PHASE_ROLL, PHASE_SCORE, MAX_CATEGORY_SCORES,
 )
 from src.env.scoring import score_category, compute_all_scores
 from src.tasks.reward_tasks import compute_reward
@@ -54,12 +54,20 @@ def make_obs(state, n_columns):
     bin_counts = jnp.zeros(N_SIDES, dtype=jnp.float32).at[sorted_dice - 1].add(1.0)  # (6,)
     rolls_onehot = jax.nn.one_hot(state.rerolls, MAX_REROLLS + 1)  # (3,)
 
+    all_scores = compute_all_scores(sorted_dice)
+    potential_normalized = all_scores.astype(jnp.float32) / MAX_CATEGORY_SCORES  # (13,)
+    all_dice_same = jnp.all(sorted_dice == sorted_dice[0])
+    yahtzee_filled = jnp.any(state.scores[YAHTZEE, :] == 50)
+    joker = jnp.array([all_dice_same & yahtzee_filled], dtype=jnp.float32)  # (1,)
+
+    phase = jnp.array([state.phase], dtype=jnp.float32)  # (1,)
+    has_yahtzee = jnp.array([yahtzee_filled], dtype=jnp.float32)  # (1,)
+
     upper_sums = jnp.sum(state.scores[:6, :], axis=0).astype(jnp.float32)
     upper_progress = jnp.minimum(upper_sums / UPPER_BONUS_THRESHOLD, 1.0)  # (n_cols,)
 
-    all_scores = compute_all_scores(sorted_dice)
     upper_with_score = upper_sums + all_scores[:6, None]  # (6, n_cols) broadcast
-    lockin = (upper_with_score >= UPPER_BONUS_THRESHOLD).astype(jnp.float32)  # (6, n_cols)
+    lockin = (upper_with_score >= UPPER_BONUS_THRESHOLD).astype(jnp.float32)
     lockin = lockin * (~state.filled_mask[:6, :]).astype(jnp.float32)
     lockin_flat = lockin.flatten()  # (6*n_cols,)
 
@@ -71,6 +79,10 @@ def make_obs(state, n_columns):
         dice_onehot,                                           # 30
         bin_counts,                                            # 6
         rolls_onehot,                                          # 3
+        potential_normalized,                                  # 13
+        joker,                                                 # 1
+        phase,                                                 # 1
+        has_yahtzee,                                           # 1
         state.filled_mask.flatten().astype(jnp.float32),       # 13 * n_cols
         state.scores.flatten().astype(jnp.float32),            # 13 * n_cols
         jnp.array([state.yahtzee_bonus], dtype=jnp.float32),   # 1

@@ -94,6 +94,33 @@ class TestMakeObsFeatures:
         assert float(jnp.sum(rolls)) == 1.0
         assert float(rolls[MAX_REROLLS]) == 1.0
 
+    def test_potential_scores_section(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        potential = obs[39:52]
+        assert jnp.all(potential >= 0.0)
+        assert jnp.all(potential <= 1.0)
+        assert float(jnp.sum(potential)) > 0.0
+
+    def test_joker_starts_zero(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        assert float(obs[52]) == 0.0
+
+    def test_phase_starts_roll(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        assert float(obs[53]) == 0.0
+
+    def test_has_yahtzee_starts_false(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        assert float(obs[54]) == 0.0
+
     def test_game_progress_starts_zero(self):
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
@@ -104,7 +131,7 @@ class TestMakeObsFeatures:
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
         obs = make_obs(state, N_COLS)
-        offset = 39 + 26 * N_COLS + 1
+        offset = 55 + 26 * N_COLS + 1
         upper_progress = obs[offset:offset + N_COLS]
         assert jnp.allclose(upper_progress, 0.0)
 
