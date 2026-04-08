@@ -2,6 +2,7 @@
 
 import os
 import time
+import yaml
 from datetime import datetime
 
 from tensorboard.compat.proto.event_pb2 import Event
@@ -19,7 +20,11 @@ class TensorBoardLogger:
         self._writer = EventFileWriter(log_dir)
         self._log_dir = log_dir
         self._task_id = f"tb_{run_id}"
+        config_path = os.path.join(log_dir, "config.yaml")
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         print(f"TensorBoard logging to {log_dir}")
+        print(f"  Config saved to {config_path}")
         print(f"  View with: tensorboard --logdir runs/")
 
     @property
