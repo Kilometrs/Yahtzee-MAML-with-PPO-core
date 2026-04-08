@@ -10,7 +10,7 @@ from src.agents.actor_critic import ActorCritic
 from src.env.constants import obs_dim
 from src.meta.maml import FOMAML
 from src.tasks.reward_tasks import TASK_NAMES
-from src.logging_utils.clearml_logger import ClearMLLogger
+from src.logging_utils import create_logger
 from src.training.evaluator import Evaluator
 
 
@@ -30,7 +30,7 @@ class MetaTrainer:
         self.meta_params = self.model.init(init_rng, jnp.zeros(od), jnp.int32(0))
         self.fomaml = FOMAML(self.model, config)
         self.opt_state = self.fomaml.init_optimizer(self.meta_params)
-        self.logger = ClearMLLogger(
+        self.logger = create_logger(
             config["clearml"]["project_name"], config["clearml"]["task_name"], config)
         base_dir = config["training"].get("checkpoint_dir", "checkpoints")
         self.checkpoint_dir = os.path.join(base_dir, self.logger.task_id)
@@ -39,6 +39,7 @@ class MetaTrainer:
         self.evaluator = Evaluator(config)
         self.eval_every = config["training"].get("eval_every", 0)
         self.n_eval_episodes = config["training"].get("n_eval_episodes", 50)
+        self.log_every = config["training"].get("log_every", 50)
 
     def train(self, start_step=0):
         n_meta_steps = self.config["meta"]["n_meta_steps"]
@@ -51,9 +52,10 @@ class MetaTrainer:
                 pbar.set_postfix({"loss": "NaN (skipped)"})
                 continue
             pbar.set_postfix({"loss": f"{meta_loss:.4f}"})
-            self.logger.log_scalar("meta", "loss", meta_loss, step)
-            for i, tl in enumerate(task_losses):
-                self.logger.log_scalar("task_loss", TASK_NAMES[i], tl, step)
+            if self.log_every and step % self.log_every == 0:
+                self.logger.log_scalar("meta", "loss", meta_loss, step)
+                for i, tl in enumerate(task_losses):
+                    self.logger.log_scalar("task_loss", TASK_NAMES[i], tl, step)
             if (step + 1) % checkpoint_every == 0:
                 self.save_checkpoint(step + 1)
             if self.eval_every and (step + 1) % self.eval_every == 0:
