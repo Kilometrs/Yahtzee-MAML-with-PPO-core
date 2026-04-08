@@ -5,8 +5,11 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./configs:/app/configs
+      - ./src:/app/src
+      - ./scripts:/app/scripts
       - ./checkpoints:/mnt/checkpoints
       - ./data:/app/data
+      - ./runs:/app/runs
     env_file:
       - path: .env
         required: false
