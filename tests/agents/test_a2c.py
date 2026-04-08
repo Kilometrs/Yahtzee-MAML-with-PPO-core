@@ -93,6 +93,61 @@ class TestA2CLoss:
         assert not jnp.allclose(loss_full_mask, loss_fewer_mask, atol=1e-4)
 
 
+class TestA2CUpperRegression:
+    @pytest.fixture
+    def setup(self):
+        model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=N_COLS,
+                            head_hidden_dim=16)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        n_steps = 8
+        obs = jax.random.normal(jax.random.PRNGKey(1), (n_steps, OBS_DIM))
+        actions = jax.random.randint(jax.random.PRNGKey(2), (n_steps,), 0, 32)
+        phases = jnp.zeros(n_steps, dtype=jnp.int32)
+        masks = jnp.concatenate([
+            jnp.ones((n_steps, 32), dtype=jnp.bool_),
+            jnp.zeros((n_steps, MAX_ACTIONS - 32), dtype=jnp.bool_),
+        ], axis=1)
+        old_log_probs = -jnp.ones(n_steps)
+        advantages = jnp.ones(n_steps)
+        returns = jnp.ones(n_steps)
+        return dict(model=model, params=params, obs=obs, actions=actions,
+                    phases=phases, masks=masks, old_log_probs=old_log_probs,
+                    advantages=advantages, returns=returns)
+
+    def test_upper_regression_changes_loss(self, setup):
+        base_loss = a2c_loss(setup["params"], setup["model"], setup["obs"],
+                             setup["actions"], setup["phases"], setup["masks"],
+                             setup["old_log_probs"], setup["advantages"], setup["returns"])
+        upper_targets = jnp.ones(setup["obs"].shape[0]) * 0.5
+        reg_loss = a2c_loss(setup["params"], setup["model"], setup["obs"],
+                            setup["actions"], setup["phases"], setup["masks"],
+                            setup["old_log_probs"], setup["advantages"], setup["returns"],
+                            upper_targets=upper_targets, upper_regression_weight=1.0)
+        assert not jnp.allclose(base_loss, reg_loss, atol=1e-4)
+
+    def test_upper_regression_disabled_by_default(self, setup):
+        loss_no_reg = a2c_loss(setup["params"], setup["model"], setup["obs"],
+                               setup["actions"], setup["phases"], setup["masks"],
+                               setup["old_log_probs"], setup["advantages"], setup["returns"])
+        loss_zero_weight = a2c_loss(setup["params"], setup["model"], setup["obs"],
+                                    setup["actions"], setup["phases"], setup["masks"],
+                                    setup["old_log_probs"], setup["advantages"], setup["returns"],
+                                    upper_targets=jnp.zeros(8), upper_regression_weight=0.0)
+        assert jnp.allclose(loss_no_reg, loss_zero_weight)
+
+    def test_differentiable_with_regression(self, setup):
+        def loss_fn(p):
+            return a2c_loss(p, setup["model"], setup["obs"], setup["actions"],
+                            setup["phases"], setup["masks"], setup["old_log_probs"],
+                            setup["advantages"], setup["returns"],
+                            upper_targets=jnp.ones(8) * 0.5,
+                            upper_regression_weight=1.0)
+        grads = jax.grad(loss_fn)(setup["params"])
+        leaves = jax.tree.leaves(grads)
+        assert all(jnp.all(jnp.isfinite(g)) for g in leaves)
+
+
 class TestA2CSplitEntropy:
     @pytest.fixture
     def setup(self):
