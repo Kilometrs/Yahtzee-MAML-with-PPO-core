@@ -20,3 +20,27 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  trainer-a2c:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["uv", "run", "python3.10", "scripts/train_a2c.py"]
+    command: ["--config", "configs/standalone-a2c.yaml"]
+    volumes:
+      - ./configs:/app/configs
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./checkpoints:/mnt/checkpoints
+      - ./data:/app/data
+      - ./runs:/app/runs
+    env_file:
+      - path: .env
+        required: false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

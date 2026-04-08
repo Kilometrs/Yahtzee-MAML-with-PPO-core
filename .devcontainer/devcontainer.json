@@ -14,6 +14,7 @@
   "updateRemoteUserUID": true,
   "initializeCommand": "mkdir -p ${localWorkspaceFolder}/checkpoints",
   "mounts": [
+    "source=${localEnv:HOME}/Yahtzee-MAML-with-PPO-core/.git,target=/home/kiploka-smilsukaste/Yahtzee-MAML-with-PPO-core/.git,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.vscode-server/extensions,target=/home/vscode/.vscode-server/extensions,type=bind,consistency=cached",
     "source=${localWorkspaceFolder}/checkpoints,target=/mnt/checkpoints,type=bind,consistency=cached"
