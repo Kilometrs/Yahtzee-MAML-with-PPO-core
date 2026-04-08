@@ -8,6 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from src.agents.actor_critic import ActorCritic
+from src.agents.a2c import a2c_loss
 from src.agents.ppo import ppo_loss
 from src.env.yahtzee_env import env_reset, env_step, make_obs, get_action_mask
 from src.env.constants import N_DICE, PHASE_ROLL, PHASE_SCORE, UPPER_BONUS_THRESHOLD
@@ -116,6 +117,14 @@ class Evaluator:
         )
         self.inner_lr = config["meta"]["inner_lr"]
         self.n_inner_steps = config["meta"]["n_inner_steps"]
+        if "a2c" in config:
+            self.loss_fn = a2c_loss
+            algo_config = config["a2c"]
+        else:
+            self.loss_fn = ppo_loss
+            algo_config = config["ppo"]
+        self.gamma = algo_config.get("gamma", 0.99)
+        self.gae_lambda = algo_config.get("gae_lambda", 0.95)
         n_parallel = config["meta"].get("n_parallel_envs", 1)
         self.n_support_envs = max(n_parallel, 10)
         self._batched_eval = _build_batched_eval(
@@ -128,14 +137,14 @@ class Evaluator:
             self.n_support_envs, self.n_columns, self.max_steps,
             self.threshold)
 
-        support_data = prepare_ppo_data(support_traj)
+        support_data = prepare_ppo_data(support_traj, gamma=self.gamma, lam=self.gae_lambda)
         obs_s, actions_s, phases_s, masks_s, lp_s, adv_s, ret_s = support_data
 
         fast_params = jax.tree.map(jnp.copy, meta_params)
         inner_lr = self.inner_lr
 
         for _ in range(self.n_inner_steps):
-            loss, grads = jax.value_and_grad(ppo_loss)(
+            loss, grads = jax.value_and_grad(self.loss_fn)(
                 fast_params, self.model, obs_s, actions_s, phases_s,
                 masks_s, lp_s, adv_s, ret_s)
             grads = jax.lax.stop_gradient(grads)

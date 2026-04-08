@@ -36,7 +36,7 @@ class ClearMLLogger:
         task.connect(config)
         self._task = task
         self._logger = task.get_logger()
-        self._log_every = config["training"].get("log_every", 10)
+        self._log_every = config["training"].get("log_every", 100)
         # Buffers: (title, series) -> list of (step, value)
         self._scalar_buf = defaultdict(list)
 
@@ -63,10 +63,9 @@ class ClearMLLogger:
         if not buf:
             return
         title, series = key
-        last_step = buf[-1][0]
-        mean_val = sum(v for _, v in buf) / len(buf)
-        self._logger.report_scalar(
-            title=title, series=series, value=mean_val, iteration=last_step)
+        for step, value in buf:
+            self._logger.report_scalar(
+                title=title, series=series, value=value, iteration=step)
 
     def flush_scalars(self):
         """Flush all buffered scalars (call at end of training)."""
