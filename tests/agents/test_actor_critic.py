@@ -90,3 +90,108 @@ class TestActorCriticForward:
         # Score head weights get zero grad when phase=0, which is expected
         nonzero = sum(1 for g in leaves if jnp.any(g != 0))
         assert nonzero > len(leaves) // 2
+
+
+class TestActorCriticDropout:
+    def test_dropout_param_accepted(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            dropout_rate=0.1)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        assert "params" in params
+
+    def test_deterministic_true_no_rng_needed(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            dropout_rate=0.1)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0),
+                                    deterministic=True)
+        assert logits.shape == (MAX_ACTIONS,)
+        assert jnp.isfinite(value)
+
+    def test_deterministic_false_needs_dropout_rng(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            dropout_rate=0.1)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0),
+                                    deterministic=False,
+                                    rngs={"dropout": jax.random.PRNGKey(1)})
+        assert logits.shape == (MAX_ACTIONS,)
+        assert jnp.isfinite(value)
+
+    def test_dropout_zero_is_noop(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            dropout_rate=0.0)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        out1 = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0), deterministic=True)
+        out2 = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0), deterministic=False,
+                           rngs={"dropout": jax.random.PRNGKey(1)})
+        assert jnp.allclose(out1[0], out2[0])
+        assert jnp.allclose(out1[1], out2[1])
+
+
+class TestActorCriticNormPosition:
+    def test_post_norm_accepted(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            norm_position="post", use_layer_norm=True)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert logits.shape == (MAX_ACTIONS,)
+        assert jnp.isfinite(value)
+
+    def test_pre_norm_is_default(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            use_layer_norm=True)
+        assert model.norm_position == "pre"
+
+    def test_post_norm_different_from_pre_norm(self):
+        rng = jax.random.PRNGKey(0)
+        obs = jax.random.normal(jax.random.PRNGKey(1), (OBS_DIM,))
+        pre = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                          use_layer_norm=True, norm_position="pre")
+        post = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                           use_layer_norm=True, norm_position="post")
+        p_pre = pre.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        p_post = post.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        l_pre, _ = pre.apply(p_pre, obs, jnp.int32(0))
+        l_post, _ = post.apply(p_post, obs, jnp.int32(0))
+        assert not jnp.allclose(l_pre, l_post, atol=1e-3)
+
+
+class TestActorCriticHeadHidden:
+    def test_head_hidden_dim_accepted(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            head_hidden_dim=32)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert logits.shape == (MAX_ACTIONS,)
+
+    def test_head_hidden_has_more_params(self):
+        rng = jax.random.PRNGKey(0)
+        no_head = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                              head_hidden_dim=0)
+        with_head = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                                head_hidden_dim=32)
+        p_no = no_head.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        p_with = with_head.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        n_no = sum(x.size for x in jax.tree.leaves(p_no))
+        n_with = sum(x.size for x in jax.tree.leaves(p_with))
+        assert n_with > n_no
+
+    def test_head_hidden_gradients_flow(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            head_hidden_dim=32)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        def loss_fn(p):
+            logits, value = model.apply(p, jnp.ones(OBS_DIM), jnp.int32(0))
+            return jnp.sum(logits[:32]) + value
+        grads = jax.grad(loss_fn)(params)
+        leaves = jax.tree.leaves(grads)
+        nonzero = sum(1 for g in leaves if jnp.any(g != 0))
+        assert nonzero > len(leaves) // 2

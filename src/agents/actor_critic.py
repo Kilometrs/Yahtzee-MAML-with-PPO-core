@@ -17,21 +17,41 @@ class ActorCritic(nn.Module):
     n_columns: int = 6
     use_layer_norm: bool = True
     activation: str = "swish"
+    dropout_rate: float = 0.0
+    head_hidden_dim: int = 0
+    norm_position: str = "pre"
 
     @nn.compact
-    def __call__(self, obs: jnp.ndarray, phase: jnp.int32):
+    def __call__(self, obs: jnp.ndarray, phase: jnp.int32,
+                 deterministic: bool = True):
         max_actions = max(32, 13 * self.n_columns)
         act_fn = nn.swish if self.activation == "swish" else nn.relu
 
         x = obs
         for _ in range(self.n_layers):
             x = nn.Dense(self.hidden_dim)(x)
-            if self.use_layer_norm:
+            if self.norm_position == "pre" and self.use_layer_norm:
                 x = nn.LayerNorm()(x)
             x = act_fn(x)
+            if self.norm_position == "post" and self.use_layer_norm:
+                x = nn.LayerNorm()(x)
+            if self.dropout_rate > 0.0:
+                x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
 
-        roll_logits = nn.Dense(32)(x)
-        score_logits = nn.Dense(13 * self.n_columns)(x)
+        if self.head_hidden_dim > 0:
+            roll_h = act_fn(nn.Dense(self.head_hidden_dim, name="roll_hidden")(x))
+            if self.use_layer_norm:
+                roll_h = nn.LayerNorm(name="roll_ln")(roll_h)
+            roll_logits = nn.Dense(32, name="roll_out")(roll_h)
+
+            score_h = act_fn(nn.Dense(self.head_hidden_dim, name="score_hidden")(x))
+            if self.use_layer_norm:
+                score_h = nn.LayerNorm(name="score_ln")(score_h)
+            score_logits = nn.Dense(13 * self.n_columns, name="score_out")(score_h)
+        else:
+            roll_logits = nn.Dense(32)(x)
+            score_logits = nn.Dense(13 * self.n_columns)(x)
+
         value = nn.elu(nn.Dense(1)(x)).squeeze(-1)
 
         roll_padded = jnp.concatenate([roll_logits, jnp.full(max_actions - 32, -jnp.inf)])
