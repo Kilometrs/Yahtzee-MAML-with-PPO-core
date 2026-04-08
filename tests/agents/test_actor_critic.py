@@ -35,42 +35,42 @@ class TestActorCriticForward:
 
     def test_output_shapes_roll_phase(self, model_and_params):
         model, params = model_and_params
-        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        logits, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
         assert logits.shape == (MAX_ACTIONS,)
         assert value.shape == ()
 
     def test_output_shapes_score_phase(self, model_and_params):
         model, params = model_and_params
-        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(1))
+        logits, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(1))
         assert logits.shape == (MAX_ACTIONS,)
         assert value.shape == ()
 
     def test_roll_logits_padded(self, model_and_params):
         model, params = model_and_params
-        logits, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        logits, _, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
         assert jnp.all(logits[32:] == -jnp.inf)
 
     def test_score_logits_finite(self, model_and_params):
         model, params = model_and_params
-        logits, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(1))
+        logits, _, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(1))
         assert jnp.all(jnp.isfinite(logits))
 
     def test_value_is_finite(self, model_and_params):
         model, params = model_and_params
-        _, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        _, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
         assert jnp.isfinite(value)
 
     def test_jittable(self, model_and_params):
         model, params = model_and_params
         apply_jit = jax.jit(model.apply)
-        logits, value = apply_jit(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        logits, value, _ = apply_jit(params, jnp.ones(OBS_DIM), jnp.int32(0))
         assert logits.shape == (MAX_ACTIONS,)
 
     def test_vmappable(self, model_and_params):
         model, params = model_and_params
         obs_batch = jnp.ones((4, OBS_DIM))
         phases = jnp.array([0, 1, 0, 1], dtype=jnp.int32)
-        logits, values = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs_batch, phases)
+        logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs_batch, phases)
         assert logits.shape == (4, MAX_ACTIONS)
         assert values.shape == (4,)
 
@@ -82,7 +82,7 @@ class TestActorCriticForward:
         """
         model, params = model_and_params
         def loss_fn(p):
-            logits, value = model.apply(p, jnp.ones(OBS_DIM), jnp.int32(0))
+            logits, value, _ = model.apply(p, jnp.ones(OBS_DIM), jnp.int32(0))
             return jnp.sum(logits[:32]) + value
         grads = jax.grad(loss_fn)(params)
         leaves = jax.tree.leaves(grads)
@@ -105,8 +105,8 @@ class TestActorCriticDropout:
                             dropout_rate=0.1)
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0),
-                                    deterministic=True)
+        logits, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0),
+                                       deterministic=True)
         assert logits.shape == (MAX_ACTIONS,)
         assert jnp.isfinite(value)
 
@@ -115,9 +115,9 @@ class TestActorCriticDropout:
                             dropout_rate=0.1)
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0),
-                                    deterministic=False,
-                                    rngs={"dropout": jax.random.PRNGKey(1)})
+        logits, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0),
+                                       deterministic=False,
+                                       rngs={"dropout": jax.random.PRNGKey(1)})
         assert logits.shape == (MAX_ACTIONS,)
         assert jnp.isfinite(value)
 
@@ -139,7 +139,7 @@ class TestActorCriticNormPosition:
                             norm_position="post", use_layer_norm=True)
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        logits, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
         assert logits.shape == (MAX_ACTIONS,)
         assert jnp.isfinite(value)
 
@@ -157,8 +157,8 @@ class TestActorCriticNormPosition:
                            use_layer_norm=True, norm_position="post")
         p_pre = pre.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
         p_post = post.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        l_pre, _ = pre.apply(p_pre, obs, jnp.int32(0))
-        l_post, _ = post.apply(p_post, obs, jnp.int32(0))
+        l_pre, _, _ = pre.apply(p_pre, obs, jnp.int32(0))
+        l_post, _, _ = post.apply(p_post, obs, jnp.int32(0))
         assert not jnp.allclose(l_pre, l_post, atol=1e-3)
 
 
@@ -168,7 +168,7 @@ class TestActorCriticHeadHidden:
                             head_hidden_dim=32)
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        logits, value = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        logits, value, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
         assert logits.shape == (MAX_ACTIONS,)
 
     def test_head_hidden_has_more_params(self):
@@ -189,9 +189,35 @@ class TestActorCriticHeadHidden:
         rng = jax.random.PRNGKey(0)
         params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
         def loss_fn(p):
-            logits, value = model.apply(p, jnp.ones(OBS_DIM), jnp.int32(0))
+            logits, value, _ = model.apply(p, jnp.ones(OBS_DIM), jnp.int32(0))
             return jnp.sum(logits[:32]) + value
         grads = jax.grad(loss_fn)(params)
         leaves = jax.tree.leaves(grads)
         nonzero = sum(1 for g in leaves if jnp.any(g != 0))
         assert nonzero > len(leaves) // 2
+
+
+class TestActorCriticUpperPred:
+    def test_output_is_3_tuple(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        result = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert len(result) == 3
+
+    def test_upper_pred_with_head(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            head_hidden_dim=32)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        _, _, upper_pred = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert upper_pred.shape == ()
+        assert jnp.isfinite(upper_pred)
+
+    def test_upper_pred_zero_without_head(self):
+        model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
+                            head_hidden_dim=0)
+        rng = jax.random.PRNGKey(0)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        _, _, upper_pred = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert upper_pred == 0.0

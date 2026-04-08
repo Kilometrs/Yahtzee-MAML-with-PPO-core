@@ -48,9 +48,15 @@ class ActorCritic(nn.Module):
             if self.use_layer_norm:
                 score_h = nn.LayerNorm(name="score_ln")(score_h)
             score_logits = nn.Dense(13 * self.n_columns, name="score_out")(score_h)
+
+            upper_h = act_fn(nn.Dense(self.head_hidden_dim, name="upper_hidden")(x))
+            if self.use_layer_norm:
+                upper_h = nn.LayerNorm(name="upper_ln")(upper_h)
+            upper_pred = nn.Dense(1, name="upper_out")(upper_h).squeeze(-1)
         else:
             roll_logits = nn.Dense(32)(x)
             score_logits = nn.Dense(13 * self.n_columns)(x)
+            upper_pred = jnp.float32(0.0)
 
         value = nn.elu(nn.Dense(1)(x)).squeeze(-1)
 
@@ -60,4 +66,4 @@ class ActorCritic(nn.Module):
             score_padded = jnp.concatenate([score_logits, jnp.full(max_actions - 13 * self.n_columns, -jnp.inf)])
 
         logits = jax.lax.cond(phase == 0, lambda: roll_padded, lambda: score_padded)
-        return logits, value
+        return logits, value, upper_pred
