@@ -29,7 +29,7 @@ def _collect_episodes_single(params, model, rng_key, task_id,
         masks = jax.vmap(get_action_mask, in_axes=(0, None))(states, n_columns)
         phases = states.phase
 
-        logits, values = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs, phases)
+        logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs, phases)
         logits = jnp.where(masks, logits, -jnp.inf)
 
         actions = jax.random.categorical(act_rng, logits)

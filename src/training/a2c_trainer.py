@@ -49,8 +49,10 @@ def build_lr_schedule(peak_lr, min_ratio, warmup_frac, plateau_frac, total_steps
 def anneal_entropy(step, total_steps, max_val, min_val, hold_frac, anneal_frac):
     """Linear entropy annealing: hold -> decay -> floor (Pape 2025, Table 6).
 
+    Pure JAX implementation — safe to use inside JIT.
+
     Args:
-        step: Current training step.
+        step: Current training step (JAX scalar or Python int).
         total_steps: Total number of gradient updates.
         max_val: Starting (maximum) entropy coefficient.
         min_val: Floor (minimum) entropy coefficient.
@@ -58,18 +60,16 @@ def anneal_entropy(step, total_steps, max_val, min_val, hold_frac, anneal_frac):
         anneal_frac: Fraction of training for linear decay (e.g. 0.9).
 
     Returns:
-        Current entropy coefficient (float).
+        Current entropy coefficient (JAX scalar).
     """
-    hold_end = int(total_steps * hold_frac)
-    anneal_end = hold_end + int(total_steps * anneal_frac)
+    hold_end = total_steps * hold_frac
+    anneal_end = hold_end + total_steps * anneal_frac
 
-    if step < hold_end:
-        return max_val
-    elif step < anneal_end:
-        progress = (step - hold_end) / max(anneal_end - hold_end, 1)
-        return max_val + (min_val - max_val) * progress
-    else:
-        return min_val
+    progress = (step - hold_end) / jnp.maximum(anneal_end - hold_end, 1.0)
+    progress = jnp.clip(progress, 0.0, 1.0)
+    annealed = max_val + (min_val - max_val) * progress
+
+    return jnp.where(step < hold_end, max_val, annealed)
 
 
 def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
@@ -87,7 +87,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
         masks = jax.vmap(get_action_mask, in_axes=(0, None))(states, n_columns)
         phases = states.phase
 
-        logits, values = jax.vmap(model.apply, in_axes=(None, 0, 0))(
+        logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(
             params, obs, phases)
         logits = jnp.where(masks, logits, -jnp.inf)
 
@@ -219,48 +219,66 @@ class A2CTrainer:
                               gamma=self.gamma,
                               gae_lambda=self.gae_lambda),
         )
+        self._train_step = self._build_train_step()
 
-    def _train_step(self, params, opt_state, rng, step):
-        """One gradient update. Returns (params, opt_state, rng, loss)."""
-        rng, collect_rng, dropout_rng = jax.random.split(rng, 3)
+    def _build_train_step(self):
+        """Build a single JIT-compiled train step (collect + grad + update)."""
+        model = self.model
+        collect_fn = self._collect
+        prepare_fn = self._prepare
+        optimizer = self.optimizer
+        value_loss_coef = self.value_loss_coef
+        n_updates = self.n_updates
+        ent_roll_max, ent_roll_min = self.entropy_roll_range
+        ent_score_max, ent_score_min = self.entropy_score_range
+        ent_hold = self.entropy_hold
+        ent_anneal = self.entropy_anneal_frac
+        has_dropout = model.dropout_rate > 0.0
 
-        trajectories = self._collect(params, collect_rng)
-        data = self._prepare(trajectories)
-        obs, actions, phases, masks, log_probs, advantages, returns = data
+        @jax.jit
+        def train_step(params, opt_state, rng, step):
+            rng, collect_rng, dropout_rng = jax.random.split(rng, 3)
 
-        ent_roll = anneal_entropy(
-            step, self.n_updates,
-            self.entropy_roll_range[0], self.entropy_roll_range[1],
-            self.entropy_hold, self.entropy_anneal_frac)
-        ent_score = anneal_entropy(
-            step, self.n_updates,
-            self.entropy_score_range[0], self.entropy_score_range[1],
-            self.entropy_hold, self.entropy_anneal_frac)
+            trajectories = collect_fn(params, collect_rng)
+            data = prepare_fn(trajectories)
+            obs, actions, phases, masks, log_probs, advantages, returns = data
 
-        has_dropout = self.model.dropout_rate > 0.0
+            ent_roll = anneal_entropy(
+                step, n_updates, ent_roll_max, ent_roll_min, ent_hold, ent_anneal)
+            ent_score = anneal_entropy(
+                step, n_updates, ent_score_max, ent_score_min, ent_hold, ent_anneal)
 
-        def loss_fn(p):
-            return a2c_loss(
-                p, self.model, obs, actions, phases, masks,
-                log_probs, advantages, returns,
-                value_loss_coef=self.value_loss_coef,
-                entropy_coef_roll=ent_roll,
-                entropy_coef_score=ent_score,
-                deterministic=not has_dropout,
-                rng=dropout_rng if has_dropout else None,
-            )
+            def loss_fn(p):
+                if has_dropout:
+                    rngs = jax.random.split(dropout_rng, obs.shape[0])
+                    def apply_dropout(o, ph, r):
+                        return model.apply(p, o, ph, deterministic=False,
+                                           rngs={"dropout": r})
+                    logits, values, _ = jax.vmap(apply_dropout)(obs, phases, rngs)
+                else:
+                    logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(
+                        p, obs, phases)
+                return a2c_loss(
+                    p, model, obs, actions, phases, masks,
+                    log_probs, advantages, returns,
+                    value_loss_coef=value_loss_coef,
+                    entropy_coef_roll=ent_roll,
+                    entropy_coef_score=ent_score,
+                )
 
-        loss, grads = jax.value_and_grad(loss_fn)(params)
+            loss, grads = jax.value_and_grad(loss_fn)(params)
 
-        grad_norm = jnp.sqrt(jax.tree_util.tree_reduce(
-            lambda acc, g: acc + jnp.sum(g ** 2), grads, initializer=0.0))
-        scale = jnp.minimum(1.0, 1.0 / (grad_norm + 1e-8))
-        grads = jax.tree.map(lambda g: g * scale, grads)
+            grad_norm = jnp.sqrt(jax.tree_util.tree_reduce(
+                lambda acc, g: acc + jnp.sum(g ** 2), grads, initializer=0.0))
+            scale = jnp.minimum(1.0, 1.0 / (grad_norm + 1e-8))
+            grads = jax.tree.map(lambda g: g * scale, grads)
 
-        updates, opt_state = self.optimizer.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
+            updates, opt_state_new = optimizer.update(grads, opt_state, params)
+            params_new = optax.apply_updates(params, updates)
 
-        return params, opt_state, rng, float(loss)
+            return params_new, opt_state_new, rng, loss
+
+        return train_step
 
     def train(self, start_step=0):
         """Run the full training loop. Returns list of losses."""
@@ -268,21 +286,23 @@ class A2CTrainer:
         pbar = tqdm(range(start_step, self.n_updates),
                     initial=start_step, total=self.n_updates)
         for step in pbar:
+            step_jax = jnp.int32(step)
             self.params, self.opt_state, self.rng, loss = self._train_step(
-                self.params, self.opt_state, self.rng, step)
-            losses.append(loss)
-            pbar.set_postfix({"loss": f"{loss:.4f}"})
+                self.params, self.opt_state, self.rng, step_jax)
+            loss_val = float(loss)
+            losses.append(loss_val)
+            pbar.set_postfix({"loss": f"{loss_val:.4f}"})
 
             if self.log_every and step % self.log_every == 0:
-                self.logger.log_scalar("train", "loss", loss, step)
-                ent_roll = anneal_entropy(
-                    step, self.n_updates,
+                self.logger.log_scalar("train", "loss", float(loss), step)
+                ent_roll = float(anneal_entropy(
+                    step_jax, self.n_updates,
                     self.entropy_roll_range[0], self.entropy_roll_range[1],
-                    self.entropy_hold, self.entropy_anneal_frac)
-                ent_score = anneal_entropy(
-                    step, self.n_updates,
+                    self.entropy_hold, self.entropy_anneal_frac))
+                ent_score = float(anneal_entropy(
+                    step_jax, self.n_updates,
                     self.entropy_score_range[0], self.entropy_score_range[1],
-                    self.entropy_hold, self.entropy_anneal_frac)
+                    self.entropy_hold, self.entropy_anneal_frac))
                 self.logger.log_scalar("entropy", "roll_coef", ent_roll, step)
                 self.logger.log_scalar("entropy", "score_coef", ent_score, step)
 

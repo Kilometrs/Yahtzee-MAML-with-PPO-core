@@ -25,13 +25,13 @@ def a2c_loss(params, model, obs, actions, phases, masks,
         rng: PRNGKey for dropout. Required when deterministic=False and model has dropout.
     """
     if deterministic or rng is None:
-        logits, values = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs, phases)
+        logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs, phases)
     else:
         rngs = jax.random.split(rng, obs.shape[0])
         def apply_with_dropout(obs_i, phase_i, rng_i):
             return model.apply(params, obs_i, phase_i, deterministic=False,
                                rngs={"dropout": rng_i})
-        logits, values = jax.vmap(apply_with_dropout)(obs, phases, rngs)
+        logits, values, _ = jax.vmap(apply_with_dropout)(obs, phases, rngs)
 
     logits = jnp.where(masks, logits, -jnp.inf)
     log_probs = jax.nn.log_softmax(logits)
@@ -46,15 +46,12 @@ def a2c_loss(params, model, obs, actions, phases, masks,
     eff_roll = entropy_coef if entropy_coef_roll is None else entropy_coef_roll
     eff_score = entropy_coef if entropy_coef_score is None else entropy_coef_score
 
-    if eff_roll == eff_score:
-        entropy_loss = -eff_roll * entropy.mean()
-    else:
-        is_roll = (phases == 0).astype(jnp.float32)
-        is_score = (phases == 1).astype(jnp.float32)
-        n_roll = jnp.maximum(is_roll.sum(), 1.0)
-        n_score = jnp.maximum(is_score.sum(), 1.0)
-        roll_entropy = (entropy * is_roll).sum() / n_roll
-        score_entropy = (entropy * is_score).sum() / n_score
-        entropy_loss = -(eff_roll * roll_entropy + eff_score * score_entropy)
+    is_roll = (phases == 0).astype(jnp.float32)
+    is_score = (phases == 1).astype(jnp.float32)
+    n_roll = jnp.maximum(is_roll.sum(), 1.0)
+    n_score = jnp.maximum(is_score.sum(), 1.0)
+    roll_entropy = (entropy * is_roll).sum() / n_roll
+    score_entropy = (entropy * is_score).sum() / n_score
+    entropy_loss = -(eff_roll * roll_entropy + eff_score * score_entropy)
 
     return policy_loss + value_loss_coef * value_loss + entropy_loss

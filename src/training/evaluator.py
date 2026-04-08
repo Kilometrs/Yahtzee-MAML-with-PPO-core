@@ -33,7 +33,7 @@ def _build_batched_eval(model, n_columns, max_steps, threshold=250):
 
             mask = get_action_mask(state, n_columns)
             obs = make_obs(state, n_columns)
-            logits, value = model.apply(params, obs, state.phase)
+            logits, value, _ = model.apply(params, obs, state.phase)
             logits = jnp.where(mask, logits, -jnp.inf)
             probs = jax.nn.softmax(logits)
             action = jnp.argmax(logits)
