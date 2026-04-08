@@ -18,7 +18,7 @@ a2c:
 meta:
   inner_lr: 0.001
   outer_lr: 0.0003
-  n_inner_steps: 5
+  n_inner_steps: 1
   n_tasks_per_batch: 6
   n_meta_steps: 100000
   n_parallel_envs: 50
