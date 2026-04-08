@@ -8,6 +8,7 @@ import pytest
 from src.agents.actor_critic import ActorCritic
 from src.meta.maml import FOMAML
 from src.training.evaluator import Evaluator
+from src.training.a2c_trainer import A2CTrainer
 from src.tasks.reward_tasks import TASK_NAMES
 from src.env.yahtzee_env import env_reset, env_step, get_action_mask
 from src.env.constants import PHASE_ROLL, PHASE_SCORE, N_DICE, obs_dim as _obs_dim
@@ -131,6 +132,53 @@ class TestEvaluation:
             if col in df_steps.columns:
                 vals = df_steps[col].dropna()
                 assert all((vals >= 1) & (vals <= 6))
+
+
+SMALL_STANDALONE_A2C_CONFIG = {
+    "env": {"n_columns": 1, "seed": 42, "max_steps_per_episode": 100},
+    "agent": {"hidden_dim": 64, "n_layers": 2, "use_layer_norm": True,
+              "activation": "swish", "dropout_rate": 0.1, "head_hidden_dim": 32,
+              "norm_position": "post"},
+    "a2c": {"gamma": 0.99, "gae_lambda": 0.0, "value_loss_coef": 0.005,
+            "entropy_coef_roll": [0.1, 0.02], "entropy_coef_score": [0.03, 0.01],
+            "entropy_hold": 0.075, "entropy_anneal": 0.9},
+    "training": {"n_games": 40, "n_parallel_envs": 4, "lr": 0.001,
+                 "lr_min_ratio": 0.05, "lr_warmup": 0.05, "lr_plateau": 0.70,
+                 "lr_decay": 0.25, "checkpoint_every": 100, "eval_every": 0,
+                 "n_eval_episodes": 0, "checkpoint_dir": "", "log_every": 0,
+                 "device": "cpu"},
+    "tasks": {"threshold_beater_score": 250},
+    "clearml": {"project_name": "test", "task_name": "test"},
+}
+
+
+class TestStandaloneA2C:
+    def test_10_updates_with_paper_architecture(self):
+        """Run 10 A2C updates with paper-style architecture (dropout, post-norm, head hidden)."""
+        os.environ["CLEARML_OFF"] = "1"
+        trainer = A2CTrainer(SMALL_STANDALONE_A2C_CONFIG)
+        losses = trainer.train()
+        assert len(losses) == 10  # 40 games / 4 envs
+        assert all(np.isfinite(l) for l in losses)
+
+    def test_existing_fomaml_unaffected(self):
+        """Verify original FOMAML+A2C integration still works with updated ActorCritic."""
+        config = SMALL_A2C_CONFIG
+        model = ActorCritic(hidden_dim=32, n_layers=1, n_columns=3)
+        rng = jax.random.PRNGKey(42)
+        rng, init_rng = jax.random.split(rng)
+        od = _obs_dim(3)
+        params = model.init(init_rng, jnp.zeros(od), jnp.int32(0))
+        fomaml = FOMAML(model, config)
+        opt_state = fomaml.init_optimizer(params)
+        losses = []
+        for step in range(5):
+            result = fomaml.meta_update(params, opt_state, rng)
+            params, opt_state, rng, meta_loss, task_losses, skipped = result
+            if not skipped:
+                losses.append(meta_loss)
+        assert len(losses) > 0
+        assert all(np.isfinite(l) for l in losses)
 
 
 class TestFullEpisodeViaEnv:
