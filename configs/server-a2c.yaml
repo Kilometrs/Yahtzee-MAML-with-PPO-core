@@ -31,4 +31,4 @@ training:
 
 clearml:
   project_name: yahtzee-maml-server-a2c
-  task_name: pc-9900X-RTX3060
+  task_name: server-5700X-A6000
