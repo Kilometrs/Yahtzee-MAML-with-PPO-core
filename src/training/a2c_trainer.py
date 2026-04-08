@@ -87,7 +87,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
         masks = jax.vmap(get_action_mask, in_axes=(0, None))(states, n_columns)
         phases = states.phase
 
-        logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(
+        logits, values, upper_preds = jax.vmap(model.apply, in_axes=(None, 0, 0))(
             params, obs, phases)
         logits = jnp.where(masks, logits, -jnp.inf)
 
@@ -95,6 +95,8 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
         log_probs = jax.nn.log_softmax(logits)
         action_log_probs = jnp.take_along_axis(
             log_probs, actions[:, None], axis=1).squeeze(1)
+
+        upper_scores = jnp.sum(states.scores[:, :6, :], axis=(1, 2)).astype(jnp.float32)
 
         task_id = jnp.int32(0)
         new_states, _, rewards, dones, _ = jax.vmap(
@@ -112,7 +114,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
             new_states, reset_states)
 
         step_data = (obs, actions, action_log_probs, rewards, dones,
-                     values, phases, masks)
+                     values, phases, masks, upper_preds, upper_scores)
         return (next_states, rng), step_data
 
     _, trajectories = jax.lax.scan(
@@ -120,13 +122,33 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
     return trajectories
 
 
-def _prepare_data(trajectories, *, gamma, gae_lambda):
+def _prepare_data(trajectories, *, gamma, gae_lambda, upper_shaping_weight=0.0):
     """Flatten trajectories and compute TD(0) advantages."""
-    obs, actions, log_probs, rewards, dones, values, phases, masks = trajectories
+    obs, actions, log_probs, rewards, dones, values, phases, masks, \
+        upper_preds, upper_scores = trajectories
     max_steps, n_envs = rewards.shape
+
+    if upper_shaping_weight > 0.0:
+        phi = 35.0 * jnp.clip(63.0 * (upper_preds + 1.0), 0.0, 63.0)
+        phi_next = jnp.concatenate([phi[1:], jnp.zeros_like(phi[:1])], axis=0)
+        phi_next = phi_next * (1.0 - dones)
+        shaping = upper_shaping_weight * (gamma * phi_next - phi)
+        rewards = rewards + shaping
 
     batched_gae = jax.vmap(compute_gae, in_axes=(1, 1, 1, None, None), out_axes=1)
     advantages, returns = batched_gae(rewards, values, dones, gamma, gae_lambda)
+
+    def backward_fill_one_env(upper_scores_env, dones_env):
+        def scan_fn(carry, t):
+            us, d = t
+            target = jnp.where(d, us / 63.0 - 1.0, carry)
+            return target, target
+        _, targets = jax.lax.scan(scan_fn, 0.0,
+                                  (upper_scores_env[::-1], dones_env[::-1]))
+        return targets[::-1]
+
+    upper_targets = jax.vmap(backward_fill_one_env, in_axes=(1, 1), out_axes=1)(
+        upper_scores, dones)
 
     T = max_steps * n_envs
     obs_flat = obs.reshape(T, -1)
@@ -136,13 +158,14 @@ def _prepare_data(trajectories, *, gamma, gae_lambda):
     log_probs_flat = log_probs.reshape(T)
     advantages_flat = advantages.reshape(T)
     returns_flat = returns.reshape(T)
+    upper_targets_flat = upper_targets.reshape(T)
 
     adv_mean = jnp.mean(advantages_flat)
     adv_std = jnp.std(advantages_flat) + 1e-8
     advantages_flat = (advantages_flat - adv_mean) / adv_std
 
     return (obs_flat, actions_flat, phases_flat, masks_flat,
-            log_probs_flat, advantages_flat, returns_flat)
+            log_probs_flat, advantages_flat, returns_flat, upper_targets_flat)
 
 
 class A2CTrainer:
@@ -174,6 +197,9 @@ class A2CTrainer:
         self.entropy_score_range = a2c_cfg.get("entropy_coef_score", [0.01, 0.01])
         self.entropy_hold = a2c_cfg.get("entropy_hold", 0.075)
         self.entropy_anneal_frac = a2c_cfg.get("entropy_anneal", 0.9)
+
+        self.upper_regression_weight = a2c_cfg.get("upper_regression_weight", 0.0)
+        self.upper_shaping_weight = a2c_cfg.get("upper_shaping_weight", 0.0)
 
         t_cfg = config["training"]
         lr_schedule = build_lr_schedule(
@@ -217,7 +243,8 @@ class A2CTrainer:
         self._prepare = jax.jit(
             functools.partial(_prepare_data,
                               gamma=self.gamma,
-                              gae_lambda=self.gae_lambda),
+                              gae_lambda=self.gae_lambda,
+                              upper_shaping_weight=self.upper_shaping_weight),
         )
         self._train_step = self._build_train_step()
 
@@ -233,6 +260,7 @@ class A2CTrainer:
         ent_score_max, ent_score_min = self.entropy_score_range
         ent_hold = self.entropy_hold
         ent_anneal = self.entropy_anneal_frac
+        upper_regression_weight = self.upper_regression_weight
         has_dropout = model.dropout_rate > 0.0
 
         @jax.jit
@@ -241,7 +269,7 @@ class A2CTrainer:
 
             trajectories = collect_fn(params, collect_rng)
             data = prepare_fn(trajectories)
-            obs, actions, phases, masks, log_probs, advantages, returns = data
+            obs, actions, phases, masks, log_probs, advantages, returns, upper_targets = data
 
             ent_roll = anneal_entropy(
                 step, n_updates, ent_roll_max, ent_roll_min, ent_hold, ent_anneal)
@@ -264,6 +292,8 @@ class A2CTrainer:
                     value_loss_coef=value_loss_coef,
                     entropy_coef_roll=ent_roll,
                     entropy_coef_score=ent_score,
+                    upper_targets=upper_targets,
+                    upper_regression_weight=upper_regression_weight,
                 )
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
