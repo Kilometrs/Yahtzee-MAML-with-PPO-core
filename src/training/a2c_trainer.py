@@ -15,7 +15,8 @@ from src.agents.actor_critic import ActorCritic
 from src.agents.a2c import a2c_loss
 from src.agents.common import compute_gae
 from src.env.yahtzee_env import (
-    env_reset, env_step, make_obs, get_action_mask, _compute_true_total,
+    env_reset, env_step, make_obs, make_obs_paper, get_action_mask,
+    _compute_true_total, paper_obs_dim,
 )
 from src.env.constants import obs_dim, PHASE_SCORE
 from src.logging_utils import create_logger
@@ -75,8 +76,9 @@ def anneal_entropy(step, total_steps, max_val, min_val, hold_frac, anneal_frac):
 
 
 def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
-                      max_steps, threshold=250):
+                      max_steps, threshold=250, use_paper_obs=False):
     """Collect trajectories for standalone A2C (always task_id=0, MaxScore)."""
+    obs_fn = make_obs_paper if use_paper_obs else make_obs
     rng_key, init_rng = jax.random.split(rng_key)
     init_keys = jax.random.split(init_rng, n_parallel_envs)
     states, _ = jax.vmap(env_reset, in_axes=(0, None))(init_keys, n_columns)
@@ -85,7 +87,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
         states, rng = carry
         rng, act_rng, reset_rng = jax.random.split(rng, 3)
 
-        obs = jax.vmap(make_obs, in_axes=(0, None))(states, n_columns)
+        obs = jax.vmap(obs_fn, in_axes=(0, None))(states, n_columns)
         masks = jax.vmap(get_action_mask, in_axes=(0, None))(states, n_columns)
         phases = states.phase
 
@@ -220,9 +222,11 @@ class A2CTrainer:
         )
         self.optimizer = optax.adam(learning_rate=lr_schedule)
 
+        self.use_paper_obs = config["env"].get("use_paper_obs", False)
+
         self.rng = jax.random.PRNGKey(config["env"]["seed"])
         self.rng, init_rng = jax.random.split(self.rng)
-        od = obs_dim(self.n_columns)
+        od = paper_obs_dim(self.n_columns) if self.use_paper_obs else obs_dim(self.n_columns)
         self.params = self.model.init(init_rng, jnp.zeros(od), jnp.int32(0))
         self.opt_state = self.optimizer.init(self.params)
 
@@ -247,7 +251,8 @@ class A2CTrainer:
                               n_parallel_envs=self.n_parallel_envs,
                               n_columns=self.n_columns,
                               max_steps=self.max_steps,
-                              threshold=self.threshold),
+                              threshold=self.threshold,
+                              use_paper_obs=self.use_paper_obs),
         )
         self._prepare = jax.jit(
             functools.partial(_prepare_data,
@@ -376,8 +381,10 @@ class A2CTrainer:
 
     def _run_eval(self, step):
         from src.training.evaluator import _build_batched_eval
+        obs_fn = make_obs_paper if self.use_paper_obs else make_obs
         batched_eval = _build_batched_eval(
-            self.model, self.n_columns, self.max_steps, self.threshold)
+            self.model, self.n_columns, self.max_steps, self.threshold,
+            obs_fn=obs_fn)
         rng = jax.random.PRNGKey(step)
         ep_rngs = jax.random.split(rng, self.n_eval_episodes)
         _, ep_summary = batched_eval(self.params, ep_rngs)

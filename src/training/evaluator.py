@@ -16,12 +16,13 @@ from src.meta.inner_loop import collect_episodes, prepare_ppo_data
 from src.tasks.reward_tasks import TASK_NAMES
 
 
-def _build_batched_eval(model, n_columns, max_steps, threshold=250):
+def _build_batched_eval(model, n_columns, max_steps, threshold=250, obs_fn=None):
     """Build a JIT-compiled function that runs N eval episodes in parallel.
 
     Returns a function: (params, rngs) -> (traj, episode_summary)
     where rngs has shape (n_episodes, 2) and all episodes run via vmap.
     """
+    _obs_fn = obs_fn if obs_fn is not None else make_obs
 
     def _single_episode(params, rng):
         rng, init_rng = jax.random.split(rng)
@@ -32,7 +33,7 @@ def _build_batched_eval(model, n_columns, max_steps, threshold=250):
             rng, act_rng = jax.random.split(rng)
 
             mask = get_action_mask(state, n_columns)
-            obs = make_obs(state, n_columns)
+            obs = _obs_fn(state, n_columns)
             logits, value, _ = model.apply(params, obs, state.phase)
             logits = jnp.where(mask, logits, -jnp.inf)
             probs = jax.nn.softmax(logits)

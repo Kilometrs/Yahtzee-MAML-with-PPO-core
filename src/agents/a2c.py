@@ -47,7 +47,7 @@ def a2c_loss(params, model, obs, actions, phases, masks,
     entropy = -jnp.sum(probs * safe_log_probs, axis=-1)
 
     policy_loss = -(action_log_probs * advantages).mean()
-    value_loss = 0.5 * jnp.mean((values - returns) ** 2)
+    value_loss = jnp.mean((values - returns) ** 2)
 
     eff_roll = entropy_coef if entropy_coef_roll is None else entropy_coef_roll
     eff_score = entropy_coef if entropy_coef_score is None else entropy_coef_score

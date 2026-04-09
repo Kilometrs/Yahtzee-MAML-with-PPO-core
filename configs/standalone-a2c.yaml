@@ -2,6 +2,7 @@ env:
   n_columns: 1
   seed: 42
   max_steps_per_episode: 39    # 1-col: exactly 13 turns × 3 steps = 39 (matches paper)
+  use_paper_obs: true           # Paper-exact 76-dim features (no raw scores)
 
 agent:
   hidden_dim: 600

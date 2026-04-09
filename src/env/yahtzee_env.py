@@ -92,6 +92,71 @@ def make_obs(state, n_columns):
     ])
 
 
+def make_obs_paper(state, n_columns):
+    """Paper-exact 76-dim observation (Pape 2025, single-column).
+
+    Feature order matches full_game_a2c.json phi_features config:
+    dice_onehot(30) + dice_counts(6) + rolls_used(3) + phase(1) +
+    has_earned_yahtzee(1) + available_categories(13) +
+    percent_progress_towards_bonus(1) + potential_scoring_opportunities(14) +
+    game_progress(1) + will_receive_bonus_if_chosen(6) = 76
+    """
+    sorted_dice = jnp.sort(state.dice)
+
+    dice_onehot = jax.nn.one_hot(sorted_dice - 1, N_SIDES).flatten()  # (30,)
+    dice_counts = jnp.zeros(N_SIDES, dtype=jnp.float32).at[sorted_dice - 1].add(1.0)  # (6,)
+    rolls_onehot = jax.nn.one_hot(state.rerolls, MAX_REROLLS + 1)  # (3,)
+    phase_f = jnp.array([state.phase], dtype=jnp.float32)  # (1,)
+
+    yahtzee_filled = jnp.any(state.scores[YAHTZEE, :] == 50)
+    has_yahtzee = jnp.array([yahtzee_filled], dtype=jnp.float32)  # (1,)
+
+    # available_categories: 1=available, 0=filled (INVERTED from filled_mask)
+    available = (~state.filled_mask).astype(jnp.float32).flatten()  # (13*n_cols,)
+    # For 1-col this is (13,). For multi-col, flatten all columns.
+
+    # percent_progress_towards_bonus: NOT clamped (can exceed 1.0)
+    upper_sum = jnp.sum(state.scores[:6, :]).astype(jnp.float32)
+    bonus_progress = jnp.array([upper_sum / UPPER_BONUS_THRESHOLD])  # (1,)
+
+    # potential_scoring_opportunities: normalized scores + joker
+    all_scores = compute_all_scores(sorted_dice)
+    potential_normalized = all_scores.astype(jnp.float32) / MAX_CATEGORY_SCORES  # (13,)
+    all_dice_same = jnp.all(sorted_dice == sorted_dice[0])
+    joker = jnp.array([all_dice_same & yahtzee_filled], dtype=jnp.float32)  # (1,)
+
+    # game_progress: 1 - (available/total)
+    n_available = jnp.sum(~state.filled_mask).astype(jnp.float32)
+    total_slots = N_CATEGORIES * n_columns
+    game_progress = jnp.array([1.0 - n_available / total_slots])  # (1,)
+
+    # will_receive_bonus_if_chosen: per upper category per column
+    upper_sums_per_col = jnp.sum(state.scores[:6, :], axis=0).astype(jnp.float32)
+    upper_with_score = upper_sums_per_col + all_scores[:6, None]  # (6, n_cols)
+    lockin = (upper_with_score >= UPPER_BONUS_THRESHOLD).astype(jnp.float32)
+    lockin = lockin * (~state.filled_mask[:6, :]).astype(jnp.float32)
+    lockin_flat = lockin.flatten()  # (6*n_cols,)
+
+    return jnp.concatenate([
+        dice_onehot,           # 30
+        dice_counts,           # 6
+        rolls_onehot,          # 3
+        phase_f,               # 1
+        has_yahtzee,           # 1
+        available,             # 13 * n_cols
+        bonus_progress,        # 1
+        potential_normalized,  # 13
+        joker,                 # 1
+        game_progress,         # 1
+        lockin_flat,           # 6 * n_cols
+    ])
+
+
+def paper_obs_dim(n_columns):
+    """Paper-exact observation dimension: 57 + 19 * n_columns."""
+    return 57 + 19 * n_columns
+
+
 def get_action_mask(state, n_columns):
     max_actions = max(32, 13 * n_columns)
 
