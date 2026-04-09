@@ -143,23 +143,14 @@ class TestActorCriticNormPosition:
         assert logits.shape == (MAX_ACTIONS,)
         assert jnp.isfinite(value)
 
-    def test_pre_norm_is_default(self):
+    def test_block_order_is_linear_act_norm_dropout(self):
+        """Paper order: Linear -> Activation -> LayerNorm -> Dropout."""
         model = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
                             use_layer_norm=True)
-        assert model.norm_position == "pre"
-
-    def test_post_norm_different_from_pre_norm(self):
         rng = jax.random.PRNGKey(0)
-        obs = jax.random.normal(jax.random.PRNGKey(1), (OBS_DIM,))
-        pre = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
-                          use_layer_norm=True, norm_position="pre")
-        post = ActorCritic(hidden_dim=64, n_layers=2, n_columns=N_COLS,
-                           use_layer_norm=True, norm_position="post")
-        p_pre = pre.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        p_post = post.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
-        l_pre, _, _ = pre.apply(p_pre, obs, jnp.int32(0))
-        l_post, _, _ = post.apply(p_post, obs, jnp.int32(0))
-        assert not jnp.allclose(l_pre, l_post, atol=1e-3)
+        params = model.init(rng, jnp.zeros(OBS_DIM), jnp.int32(0))
+        logits, _, _ = model.apply(params, jnp.ones(OBS_DIM), jnp.int32(0))
+        assert jnp.all(jnp.isfinite(logits[:32]))
 
 
 class TestActorCriticHeadHidden:

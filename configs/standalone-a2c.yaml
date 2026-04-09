@@ -5,12 +5,12 @@ env:
 
 agent:
   hidden_dim: 600
-  n_layers: 3
+  n_layers: 2             # Paper: num_hidden-1 = 2 trunk blocks
   use_layer_norm: true
   activation: swish
   dropout_rate: 0.1
-  head_hidden_dim: 128
-  norm_position: post
+  head_hidden_dim: 600    # Paper: heads use same width as trunk
+  norm_position: post     # Paper: Linear → Swish → LayerNorm → Dropout
 
 a2c:
   gamma: 0.99
@@ -24,7 +24,7 @@ a2c:
   upper_shaping_weight: 0.0    # disabled until upper head is trained
 
 training:
-  n_games: 1000000
+  n_games: 5000000
   n_parallel_envs: 20
   lr: 0.0001
   lr_min_ratio: 0.05
