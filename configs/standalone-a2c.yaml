@@ -1,7 +1,7 @@
 env:
   n_columns: 1
   seed: 42
-  max_steps_per_episode: 200
+  max_steps_per_episode: 50    # 1-col game is ~39 steps; 50 gives one clean episode per env
 
 agent:
   hidden_dim: 600
@@ -21,7 +21,7 @@ a2c:
   entropy_hold: 0.3       # Paper Table 1 "Baseline" — hold max entropy for 30% of training
   entropy_anneal: 0.6     # Then anneal over 60%
   upper_regression_weight: 1.0
-  upper_shaping_weight: 1.0
+  upper_shaping_weight: 0.0    # disabled until upper head is trained
 
 training:
   n_games: 1000000
@@ -43,4 +43,4 @@ tasks:
 
 clearml:
   project_name: yahtzee-standalone-a2c
-  task_name:
+  task_name: 5700X-A6000

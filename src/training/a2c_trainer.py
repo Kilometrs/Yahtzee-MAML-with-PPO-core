@@ -14,8 +14,10 @@ from tqdm import tqdm
 from src.agents.actor_critic import ActorCritic
 from src.agents.a2c import a2c_loss
 from src.agents.common import compute_gae
-from src.env.yahtzee_env import env_reset, env_step, make_obs, get_action_mask
-from src.env.constants import obs_dim
+from src.env.yahtzee_env import (
+    env_reset, env_step, make_obs, get_action_mask, _compute_true_total,
+)
+from src.env.constants import obs_dim, PHASE_SCORE
 from src.logging_utils import create_logger
 
 
@@ -98,10 +100,17 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
 
         upper_scores = jnp.sum(states.scores[:, :6, :], axis=(1, 2)).astype(jnp.float32)
 
+        # Compute totals BEFORE step for raw reward calculation
+        prev_totals = jax.vmap(_compute_true_total)(states.scores, states.yahtzee_bonus)
+
         task_id = jnp.int32(0)
-        new_states, _, rewards, dones, _ = jax.vmap(
+        new_states, _, _, dones, _ = jax.vmap(
             env_step, in_axes=(0, 0, None, None, None)
         )(states, actions, task_id, n_columns, threshold)
+
+        # Raw reward = score delta (paper: Rt = score(ct+1) - score(ct))
+        new_totals = jax.vmap(_compute_true_total)(new_states.scores, new_states.yahtzee_bonus)
+        rewards = (new_totals - prev_totals).astype(jnp.float32)
 
         reset_keys = jax.random.split(reset_rng, n_parallel_envs)
         reset_states, _ = jax.vmap(env_reset, in_axes=(0, None))(
