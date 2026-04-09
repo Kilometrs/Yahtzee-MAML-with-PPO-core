@@ -14,7 +14,6 @@ output layers (paper Section 4.4.1).
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
-from jax import numpy as jnp
 
 # Paper-aligned initializers
 _kaiming_init = nn.initializers.he_normal()
@@ -31,14 +30,15 @@ class ActorCritic(nn.Module):
     head_hidden_dim: int = 0
     norm_position: str = "pre"
 
-    def _block(self, x, features, name, act_fn, deterministic):
+    def _block(self, x, features, name, act_fn, deterministic, dropout_rate=None):
         """One Block: Linear → Activation → LayerNorm → Dropout (paper order)."""
+        dr = self.dropout_rate if dropout_rate is None else dropout_rate
         x = nn.Dense(features, kernel_init=_kaiming_init, name=f"{name}_dense")(x)
         x = act_fn(x)
         if self.use_layer_norm:
             x = nn.LayerNorm(name=f"{name}_ln")(x)
-        if self.dropout_rate > 0.0:
-            x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
+        if dr > 0.0:
+            x = nn.Dropout(rate=dr)(x, deterministic=deterministic)
         return x
 
     @nn.compact
@@ -52,7 +52,7 @@ class ActorCritic(nn.Module):
         for i in range(self.n_layers):
             x = self._block(x, self.hidden_dim, f"trunk_{i}", act_fn, deterministic)
 
-        # Heads
+        # Heads — paper: rolling/scoring have dropout, value/upper don't
         if self.head_hidden_dim > 0:
             roll_h = self._block(x, self.head_hidden_dim, "roll_head", act_fn, deterministic)
             roll_logits = nn.Dense(32, kernel_init=_orthogonal_init, name="roll_out")(roll_h)
@@ -60,10 +60,10 @@ class ActorCritic(nn.Module):
             score_h = self._block(x, self.head_hidden_dim, "score_head", act_fn, deterministic)
             score_logits = nn.Dense(13 * self.n_columns, kernel_init=_orthogonal_init, name="score_out")(score_h)
 
-            value_h = self._block(x, self.head_hidden_dim, "value_head", act_fn, deterministic)
+            value_h = self._block(x, self.head_hidden_dim, "value_head", act_fn, deterministic, dropout_rate=0.0)
             value = nn.elu(nn.Dense(1, kernel_init=_orthogonal_init, name="value_out")(value_h)).squeeze(-1)
 
-            upper_h = self._block(x, self.head_hidden_dim, "upper_head", act_fn, deterministic)
+            upper_h = self._block(x, self.head_hidden_dim, "upper_head", act_fn, deterministic, dropout_rate=0.0)
             upper_pred = nn.Dense(1, kernel_init=_orthogonal_init, name="upper_out")(upper_h).squeeze(-1)
         else:
             roll_logits = nn.Dense(32)(x)

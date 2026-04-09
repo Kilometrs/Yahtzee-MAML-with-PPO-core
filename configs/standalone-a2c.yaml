@@ -1,7 +1,7 @@
 env:
   n_columns: 1
   seed: 42
-  max_steps_per_episode: 50    # 1-col game is ~39 steps; 50 gives one clean episode per env
+  max_steps_per_episode: 39    # 1-col: exactly 13 turns × 3 steps = 39 (matches paper)
 
 agent:
   hidden_dim: 600
