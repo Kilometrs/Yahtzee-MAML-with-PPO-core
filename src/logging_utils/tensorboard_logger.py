@@ -15,9 +15,10 @@ class TensorBoardLogger:
 
     def __init__(self, project_name: str, task_name: str, config: dict):
         run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        log_dir = os.path.join("runs", project_name, f"{run_id}_{task_name}")
+        tag = task_name or "run"
+        log_dir = os.path.join("runs", project_name, f"{run_id}_{tag}")
         os.makedirs(log_dir, exist_ok=True)
-        self._writer = EventFileWriter(log_dir)
+        self._writer = EventFileWriter(log_dir, flush_secs=10)
         self._log_dir = log_dir
         self._task_id = f"tb_{run_id}"
         config_path = os.path.join(log_dir, "config.yaml")
