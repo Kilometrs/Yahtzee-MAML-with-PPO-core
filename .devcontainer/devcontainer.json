@@ -20,6 +20,7 @@
     "source=${localWorkspaceFolder}/checkpoints,target=/mnt/checkpoints,type=bind,consistency=cached"
   ],
   "postCreateCommand": "uv sync --frozen --group dev && uv python install",
+  "forwardPorts": [6006],
   "containerEnv": {
     "PYTHONPATH": "/app/src"
   },
