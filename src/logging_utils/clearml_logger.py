@@ -45,7 +45,7 @@ class ClearMLLogger:
         return self._task.id
 
     def log_scalar(self, title: str, series: str, value: float, step: int) -> None:
-        """Buffer a scalar value and flush every ``log_every`` steps.
+        """Buffer a scalar value and flush every 10 entries per key.
 
         Args:
             title: Plot title (e.g. "Loss").
@@ -55,7 +55,7 @@ class ClearMLLogger:
         """
         key = (title, series)
         self._scalar_buf[key].append((step, value))
-        if len(self._scalar_buf[key]) >= self._log_every:
+        if len(self._scalar_buf[key]) >= 10:
             self._flush_scalar(key)
 
     def _flush_scalar(self, key):
