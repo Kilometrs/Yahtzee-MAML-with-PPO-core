@@ -16,7 +16,7 @@ from src.agents.a2c import a2c_loss
 from src.agents.common import compute_gae
 from src.env.yahtzee_env import (
     env_reset, env_step, make_obs, make_obs_paper, get_action_mask,
-    _compute_true_total, paper_obs_dim,
+    get_action_mask_paper, _compute_true_total, paper_obs_dim,
 )
 from src.env.constants import obs_dim, PHASE_SCORE
 from src.logging_utils import create_logger
@@ -79,6 +79,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
                       max_steps, threshold=250, use_paper_obs=False):
     """Collect trajectories for standalone A2C (always task_id=0, MaxScore)."""
     obs_fn = make_obs_paper if use_paper_obs else make_obs
+    mask_fn = get_action_mask_paper if use_paper_obs else get_action_mask
     rng_key, init_rng = jax.random.split(rng_key)
     init_keys = jax.random.split(init_rng, n_parallel_envs)
     states, _ = jax.vmap(env_reset, in_axes=(0, None))(init_keys, n_columns)
@@ -88,7 +89,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
         rng, act_rng, reset_rng = jax.random.split(rng, 3)
 
         obs = jax.vmap(obs_fn, in_axes=(0, None))(states, n_columns)
-        masks = jax.vmap(get_action_mask, in_axes=(0, None))(states, n_columns)
+        masks = jax.vmap(mask_fn, in_axes=(0, None))(states, n_columns)
         phases = states.phase
 
         logits, values, upper_preds = jax.vmap(model.apply, in_axes=(None, 0, 0))(
@@ -382,9 +383,10 @@ class A2CTrainer:
     def _run_eval(self, step):
         from src.training.evaluator import _build_batched_eval
         obs_fn = make_obs_paper if self.use_paper_obs else make_obs
+        mask_fn = get_action_mask_paper if self.use_paper_obs else get_action_mask
         batched_eval = _build_batched_eval(
             self.model, self.n_columns, self.max_steps, self.threshold,
-            obs_fn=obs_fn)
+            obs_fn=obs_fn, mask_fn=mask_fn)
         rng = jax.random.PRNGKey(step)
         ep_rngs = jax.random.split(rng, self.n_eval_episodes)
         _, ep_summary = batched_eval(self.params, ep_rngs)

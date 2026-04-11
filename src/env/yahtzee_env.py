@@ -177,6 +177,27 @@ def get_action_mask(state, n_columns):
     return jnp.where(state.phase == PHASE_ROLL, roll_mask, score_mask_padded)
 
 
+def get_action_mask_paper(state, n_columns):
+    """Paper-compatible action mask: ALL unfilled categories are valid for scoring.
+
+    Unlike get_action_mask which only allows categories with score > 0,
+    this allows strategic cross-outs (scoring 0 in a category to save
+    better ones for later). Matches the paper's MaskedSoftmax behavior.
+    """
+    max_actions = max(32, 13 * n_columns)
+
+    roll_mask = jnp.concatenate([
+        jnp.ones(32, dtype=jnp.bool_),
+        jnp.zeros(max_actions - 32, dtype=jnp.bool_),
+    ])
+
+    score_mask = (~state.filled_mask).flatten()
+    score_mask_padded = jnp.zeros(max_actions, dtype=jnp.bool_)
+    score_mask_padded = score_mask_padded.at[:13 * n_columns].set(score_mask)
+
+    return jnp.where(state.phase == PHASE_ROLL, roll_mask, score_mask_padded)
+
+
 def _roll_step(state, action, n_columns):
     keep_mask = jnp.array([(action >> i) & 1 for i in range(N_DICE)], dtype=jnp.bool_)
     rng_key, dice_rng = jax.random.split(state.rng_key)

@@ -25,7 +25,7 @@ a2c:
   upper_shaping_weight: 0.0    # disabled until upper head is trained
 
 training:
-  n_games: 5000000
+  n_games: 250000          # Paper: 250k games for comparison, 1M for final
   n_parallel_envs: 20
   lr: 0.0001
   lr_min_ratio: 0.05
