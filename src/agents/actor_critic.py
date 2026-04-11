@@ -52,12 +52,16 @@ class ActorCritic(nn.Module):
         for i in range(self.n_layers):
             x = self._block(x, self.hidden_dim, f"trunk_{i}", act_fn, deterministic)
 
-        # Heads — paper: rolling/scoring have dropout, value/upper don't
+        # Heads — paper: rolling/scoring have double dropout, value/upper have none
         if self.head_hidden_dim > 0:
             roll_h = self._block(x, self.head_hidden_dim, "roll_head", act_fn, deterministic)
+            if self.dropout_rate > 0.0:
+                roll_h = nn.Dropout(rate=self.dropout_rate, name="roll_drop")(roll_h, deterministic=deterministic)
             roll_logits = nn.Dense(32, kernel_init=_orthogonal_init, name="roll_out")(roll_h)
 
             score_h = self._block(x, self.head_hidden_dim, "score_head", act_fn, deterministic)
+            if self.dropout_rate > 0.0:
+                score_h = nn.Dropout(rate=self.dropout_rate, name="score_drop")(score_h, deterministic=deterministic)
             score_logits = nn.Dense(13 * self.n_columns, kernel_init=_orthogonal_init, name="score_out")(score_h)
 
             value_h = self._block(x, self.head_hidden_dim, "value_head", act_fn, deterministic, dropout_rate=0.0)

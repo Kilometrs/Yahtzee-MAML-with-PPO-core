@@ -136,14 +136,17 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
 
 
 def _prepare_data(trajectories, *, gamma, gae_lambda, upper_shaping_weight=0.0):
-    """Flatten trajectories and compute TD(0) advantages."""
+    """Flatten trajectories, apply reward shaping, compute TD(0) returns.
+
+    Paper-exact flow: returns use collection-time V(s'), advantages are
+    computed in the loss function using fresh training-time V(s).
+    """
     obs, actions, log_probs, rewards, dones, values, phases, masks, \
         upper_preds, upper_scores = trajectories
     max_steps, n_envs = rewards.shape
 
     if upper_shaping_weight > 0.0:
         # Paper-exact potential: Φ(s) = clamp(pred*63+63, 0, 63) / 63 * 35
-        # Range: [0, 35]. No gamma discount on Φ(s').
         cur_score = jnp.clip(upper_preds * 63.0 + 63.0, 0.0, 63.0)
         phi = (cur_score / 63.0) * 35.0
         phi_next = jnp.concatenate([phi[1:], jnp.zeros_like(phi[:1])], axis=0)
@@ -151,9 +154,13 @@ def _prepare_data(trajectories, *, gamma, gae_lambda, upper_shaping_weight=0.0):
         shaping = upper_shaping_weight * (phi_next - phi)
         rewards = rewards + shaping
 
-    batched_gae = jax.vmap(compute_gae, in_axes=(1, 1, 1, None, None), out_axes=1)
-    advantages, returns = batched_gae(rewards, values, dones, gamma, gae_lambda)
+    # Paper TD(0): returns = rewards + gamma * V_collection(s_{t+1})
+    # Time-shift values to get V(s_{t+1}) — same as paper's next_v_baseline
+    next_values = jnp.concatenate([values[1:], jnp.zeros_like(values[:1])], axis=0)
+    next_values = next_values * (1.0 - dones)  # zero at episode boundaries
+    returns = rewards + gamma * next_values
 
+    # Upper score targets (backward-fill final upper score per episode)
     def backward_fill_one_env(upper_scores_env, dones_env):
         def scan_fn(carry, t):
             us, d = t
@@ -172,16 +179,11 @@ def _prepare_data(trajectories, *, gamma, gae_lambda, upper_shaping_weight=0.0):
     phases_flat = phases.reshape(T)
     masks_flat = masks.reshape(T, -1)
     log_probs_flat = log_probs.reshape(T)
-    advantages_flat = advantages.reshape(T)
     returns_flat = returns.reshape(T)
     upper_targets_flat = upper_targets.reshape(T)
 
-    adv_mean = jnp.mean(advantages_flat)
-    adv_std = jnp.std(advantages_flat) + 1e-8
-    advantages_flat = (advantages_flat - adv_mean) / adv_std
-
     return (obs_flat, actions_flat, phases_flat, masks_flat,
-            log_probs_flat, advantages_flat, returns_flat, upper_targets_flat)
+            log_probs_flat, returns_flat, upper_targets_flat)
 
 
 class A2CTrainer:
@@ -288,7 +290,7 @@ class A2CTrainer:
 
             trajectories = collect_fn(params, collect_rng)
             data = prepare_fn(trajectories)
-            obs, actions, phases, masks, log_probs, advantages, returns, upper_targets = data
+            obs, actions, phases, masks, log_probs, returns, upper_targets = data
 
             ent_roll = anneal_entropy(
                 step, n_updates, ent_roll_max, ent_roll_min, ent_hold, ent_anneal)
@@ -296,24 +298,42 @@ class A2CTrainer:
                 step, n_updates, ent_score_max, ent_score_min, ent_hold, ent_anneal)
 
             def loss_fn(p):
-                if has_dropout:
-                    rngs = jax.random.split(dropout_rng, obs.shape[0])
-                    def apply_dropout(o, ph, r):
-                        return model.apply(p, o, ph, deterministic=False,
-                                           rngs={"dropout": r})
-                    logits, values, _ = jax.vmap(apply_dropout)(obs, phases, rngs)
-                else:
-                    logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(
-                        p, obs, phases)
-                return a2c_loss(
-                    p, model, obs, actions, phases, masks,
-                    log_probs, advantages, returns,
-                    value_loss_coef=value_loss_coef,
-                    entropy_coef_roll=ent_roll,
-                    entropy_coef_score=ent_score,
-                    upper_targets=upper_targets,
-                    upper_regression_weight=upper_regression_weight,
-                )
+                # Paper-exact: fresh forward pass for BOTH policy and value
+                logits, values, upper_preds = jax.vmap(model.apply, in_axes=(None, 0, 0))(
+                    p, obs, phases)
+
+                # Paper TD(0): advantages = returns - V_training(s).detach()
+                advantages = returns - jax.lax.stop_gradient(values)
+                adv_mean = jnp.mean(advantages)
+                adv_std = jnp.std(advantages) + 1e-8
+                advantages = (advantages - adv_mean) / adv_std
+
+                logits = jnp.where(masks, logits, -jnp.inf)
+                log_probs_new = jax.nn.log_softmax(logits)
+                action_log_probs = jnp.take_along_axis(
+                    log_probs_new, actions[:, None], axis=1).squeeze(1)
+                probs = jax.nn.softmax(logits)
+                safe_lp = jnp.where(masks, log_probs_new, 0.0)
+                entropy = -jnp.sum(probs * safe_lp, axis=-1)
+
+                policy_loss = -(action_log_probs * advantages).mean()
+                v_loss = jnp.mean((values - returns) ** 2)
+
+                # Split entropy by phase
+                is_roll = (phases == 0).astype(jnp.float32)
+                is_score = (phases == 1).astype(jnp.float32)
+                roll_ent = (entropy * is_roll).sum() / jnp.maximum(is_roll.sum(), 1.0)
+                score_ent = (entropy * is_score).sum() / jnp.maximum(is_score.sum(), 1.0)
+                entropy_loss = -(ent_roll * roll_ent + ent_score * score_ent)
+
+                # Upper regression loss
+                upper_loss = jnp.where(
+                    upper_regression_weight > 0.0,
+                    upper_regression_weight * jnp.mean((upper_preds - upper_targets) ** 2),
+                    0.0,
+                ) if upper_targets is not None else 0.0
+
+                return policy_loss + value_loss_coef * v_loss + entropy_loss + upper_loss
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
 
