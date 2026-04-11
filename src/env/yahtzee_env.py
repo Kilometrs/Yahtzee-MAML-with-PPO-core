@@ -305,6 +305,22 @@ def env_step(state, action, task_id, n_columns, threshold=250):
 
 
 def env_step_paper(state, action, task_id, n_columns, threshold=250):
+    """Paper-compatible env step: no early score transition on keep-all.
+
+    Every turn takes exactly 3 steps (roll, roll, score) = 39 steps per game.
+    """
+    new_state, reward, done = jax.lax.cond(
+        state.phase == PHASE_ROLL,
+        lambda s, a, t: _roll_step_paper(s, a, n_columns),
+        lambda s, a, t: _score_step(s, a, t, n_columns, threshold),
+        state, action, task_id,
+    )
+    obs = make_obs_paper(new_state, n_columns)
+    info = {"phase": new_state.phase}
+    return new_state, obs, reward, done, info
+
+
+def env_step_paper(state, action, task_id, n_columns, threshold=250):
     """Paper-compatible env step: no early score transition on action 31.
 
     Every turn is exactly 3 steps (roll, roll, score) = 39 steps per game.
