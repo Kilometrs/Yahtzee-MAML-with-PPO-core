@@ -141,10 +141,13 @@ def _prepare_data(trajectories, *, gamma, gae_lambda, upper_shaping_weight=0.0):
     max_steps, n_envs = rewards.shape
 
     if upper_shaping_weight > 0.0:
-        phi = 35.0 * jnp.clip(63.0 * (upper_preds + 1.0), 0.0, 63.0)
+        # Paper-exact potential: Φ(s) = clamp(pred*63+63, 0, 63) / 63 * 35
+        # Range: [0, 35]. No gamma discount on Φ(s').
+        cur_score = jnp.clip(upper_preds * 63.0 + 63.0, 0.0, 63.0)
+        phi = (cur_score / 63.0) * 35.0
         phi_next = jnp.concatenate([phi[1:], jnp.zeros_like(phi[:1])], axis=0)
         phi_next = phi_next * (1.0 - dones)
-        shaping = upper_shaping_weight * (gamma * phi_next - phi)
+        shaping = upper_shaping_weight * (phi_next - phi)
         rewards = rewards + shaping
 
     batched_gae = jax.vmap(compute_gae, in_axes=(1, 1, 1, None, None), out_axes=1)
