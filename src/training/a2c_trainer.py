@@ -85,16 +85,26 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
     init_keys = jax.random.split(init_rng, n_parallel_envs)
     states, _ = jax.vmap(env_reset, in_axes=(0, None))(init_keys, n_columns)
 
+    has_dropout = model.dropout_rate > 0.0
+
     def scan_step(carry, _):
         states, rng = carry
-        rng, act_rng, reset_rng = jax.random.split(rng, 3)
+        rng, act_rng, reset_rng, dropout_rng = jax.random.split(rng, 4)
 
         obs = jax.vmap(obs_fn, in_axes=(0, None))(states, n_columns)
         masks = jax.vmap(mask_fn, in_axes=(0, None))(states, n_columns)
         phases = states.phase
 
-        logits, values, upper_preds = jax.vmap(model.apply, in_axes=(None, 0, 0))(
-            params, obs, phases)
+        # Paper: model in train() mode during collection (dropout ON)
+        if has_dropout:
+            drop_keys = jax.random.split(dropout_rng, n_parallel_envs)
+            def apply_train(o, ph, dk):
+                return model.apply(params, o, ph, deterministic=False,
+                                   rngs={"dropout": dk})
+            logits, values, upper_preds = jax.vmap(apply_train)(obs, phases, drop_keys)
+        else:
+            logits, values, upper_preds = jax.vmap(model.apply, in_axes=(None, 0, 0))(
+                params, obs, phases)
         logits = jnp.where(masks, logits, -jnp.inf)
 
         actions = jax.random.categorical(act_rng, logits)
