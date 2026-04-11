@@ -29,12 +29,13 @@ class EnvState(NamedTuple):
 
 def _roll_dice(rng_key, dice, keep_mask):
     new_rolls = jax.random.randint(rng_key, (N_DICE,), 1, N_SIDES + 1)
-    return jnp.where(keep_mask, dice, new_rolls)
+    result = jnp.where(keep_mask, dice, new_rolls)
+    return jnp.sort(result)  # Paper: dice always sorted after roll
 
 
 def env_reset(rng_key, n_columns):
     rng_key, dice_rng = jax.random.split(rng_key)
-    dice = jax.random.randint(dice_rng, (N_DICE,), 1, N_SIDES + 1)
+    dice = jnp.sort(jax.random.randint(dice_rng, (N_DICE,), 1, N_SIDES + 1))
     state = EnvState(
         dice=dice,
         rerolls=jnp.int32(MAX_REROLLS),
@@ -271,7 +272,7 @@ def _score_step(state, action, task_id, n_columns, threshold):
     done = jnp.all(new_filled)
 
     rng_key, dice_rng, next_rng = jax.random.split(state.rng_key, 3)
-    next_dice = jax.random.randint(dice_rng, (N_DICE,), 1, N_SIDES + 1)
+    next_dice = jnp.sort(jax.random.randint(dice_rng, (N_DICE,), 1, N_SIDES + 1))
 
     reward = compute_reward(
         task_id=task_id,
