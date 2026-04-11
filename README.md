@@ -73,6 +73,12 @@ uv run python scripts/train.py --config configs/default.yaml --resume checkpoint
 docker compose up --build
 ```
 
+**Standalone A2C (interactive, e.g. inside tmux):**
+
+```bash
+GPU_ID=1 docker compose run --rm -e TF_CPP_MIN_LOG_LEVEL=2 -e CLEARML_OFF=0 trainer-a2c --config configs/standalone-a2c.yaml
+```
+
 The compose file mounts `configs/`, `checkpoints/`, and `data/` so your runs persist on the host.
 
 ## Configuration
