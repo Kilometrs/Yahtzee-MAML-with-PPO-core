@@ -10,13 +10,14 @@ from tqdm import tqdm
 from src.agents.actor_critic import ActorCritic
 from src.agents.a2c import a2c_loss
 from src.agents.ppo import ppo_loss
-from src.env.yahtzee_env import env_reset, env_step, make_obs, get_action_mask, get_action_mask_paper
+from src.env.yahtzee_env import env_reset, env_step, env_step_paper, make_obs, get_action_mask, get_action_mask_paper
 from src.env.constants import N_DICE, PHASE_ROLL, PHASE_SCORE, UPPER_BONUS_THRESHOLD
 from src.meta.inner_loop import collect_episodes, prepare_ppo_data
 from src.tasks.reward_tasks import TASK_NAMES
 
 
-def _build_batched_eval(model, n_columns, max_steps, threshold=250, obs_fn=None, mask_fn=None):
+def _build_batched_eval(model, n_columns, max_steps, threshold=250,
+                        obs_fn=None, mask_fn=None, step_fn=None):
     """Build a JIT-compiled function that runs N eval episodes in parallel.
 
     Returns a function: (params, rngs) -> (traj, episode_summary)
@@ -24,6 +25,7 @@ def _build_batched_eval(model, n_columns, max_steps, threshold=250, obs_fn=None,
     """
     _obs_fn = obs_fn if obs_fn is not None else make_obs
     _mask_fn = mask_fn if mask_fn is not None else get_action_mask
+    _step_fn = step_fn if step_fn is not None else env_step
 
     def _single_episode(params, rng):
         rng, init_rng = jax.random.split(rng)
@@ -46,7 +48,7 @@ def _build_batched_eval(model, n_columns, max_steps, threshold=250, obs_fn=None,
             top3_idx = jnp.argsort(probs)[::-1][:3]
             top3_probs = probs[top3_idx]
 
-            new_state, _, _, done_flag, _ = env_step(
+            new_state, _, _, done_flag, _ = _step_fn(
                 state, action, jnp.int32(0), n_columns, threshold)
 
             cat = action // n_columns

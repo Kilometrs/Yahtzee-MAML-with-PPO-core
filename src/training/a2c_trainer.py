@@ -15,8 +15,8 @@ from src.agents.actor_critic import ActorCritic
 from src.agents.a2c import a2c_loss
 from src.agents.common import compute_gae
 from src.env.yahtzee_env import (
-    env_reset, env_step, make_obs, make_obs_paper, get_action_mask,
-    get_action_mask_paper, _compute_true_total, paper_obs_dim,
+    env_reset, env_step, env_step_paper, make_obs, make_obs_paper,
+    get_action_mask, get_action_mask_paper, _compute_true_total, paper_obs_dim,
 )
 from src.env.constants import obs_dim, PHASE_SCORE
 from src.logging_utils import create_logger
@@ -80,6 +80,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
     """Collect trajectories for standalone A2C (always task_id=0, MaxScore)."""
     obs_fn = make_obs_paper if use_paper_obs else make_obs
     mask_fn = get_action_mask_paper if use_paper_obs else get_action_mask
+    step_fn = env_step_paper if use_paper_obs else env_step
     rng_key, init_rng = jax.random.split(rng_key)
     init_keys = jax.random.split(init_rng, n_parallel_envs)
     states, _ = jax.vmap(env_reset, in_axes=(0, None))(init_keys, n_columns)
@@ -108,7 +109,7 @@ def _collect_episodes(params, rng_key, *, model, n_parallel_envs, n_columns,
 
         task_id = jnp.int32(0)
         new_states, _, _, dones, _ = jax.vmap(
-            env_step, in_axes=(0, 0, None, None, None)
+            step_fn, in_axes=(0, 0, None, None, None)
         )(states, actions, task_id, n_columns, threshold)
 
         # Raw reward = score delta (paper: Rt = score(ct+1) - score(ct))
@@ -387,9 +388,10 @@ class A2CTrainer:
         from src.training.evaluator import _build_batched_eval
         obs_fn = make_obs_paper if self.use_paper_obs else make_obs
         mask_fn = get_action_mask_paper if self.use_paper_obs else get_action_mask
+        step_fn = env_step_paper if self.use_paper_obs else env_step
         batched_eval = _build_batched_eval(
             self.model, self.n_columns, self.max_steps, self.threshold,
-            obs_fn=obs_fn, mask_fn=mask_fn)
+            obs_fn=obs_fn, mask_fn=mask_fn, step_fn=step_fn)
         rng = jax.random.PRNGKey(step)
         ep_rngs = jax.random.split(rng, self.n_eval_episodes)
         _, ep_summary = batched_eval(self.params, ep_rngs)

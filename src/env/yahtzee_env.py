@@ -216,6 +216,26 @@ def _roll_step(state, action, n_columns):
     return new_state, jnp.float32(0.0), jnp.bool_(False)
 
 
+def _roll_step_paper(state, action, n_columns):
+    """Paper-compatible roll step: no early score transition.
+
+    Transition to score phase ONLY when all rerolls are used (rerolls <= 0).
+    Action 31 (keep all) does NOT skip to score — it just keeps all dice.
+    This ensures every turn is exactly 3 steps: roll, roll, score.
+    """
+    keep_mask = jnp.array([(action >> i) & 1 for i in range(N_DICE)], dtype=jnp.bool_)
+    rng_key, dice_rng = jax.random.split(state.rng_key)
+    new_dice = _roll_dice(dice_rng, state.dice, keep_mask)
+    new_rerolls = state.rerolls - 1
+    go_to_score = new_rerolls <= 0  # NO action==31 shortcut
+    new_phase = jnp.where(go_to_score, PHASE_SCORE, PHASE_ROLL)
+    new_state = state._replace(
+        dice=new_dice, rerolls=new_rerolls, phase=new_phase,
+        rng_key=rng_key, step_count=state.step_count + 1,
+    )
+    return new_state, jnp.float32(0.0), jnp.bool_(False)
+
+
 def _compute_true_total(scores, yahtzee_bonus):
     """Compute total score including upper bonuses and yahtzee bonuses."""
     raw = jnp.sum(scores)
@@ -280,5 +300,21 @@ def env_step(state, action, task_id, n_columns, threshold=250):
         state, action, task_id,
     )
     obs = make_obs(new_state, n_columns)
+    info = {"phase": new_state.phase}
+    return new_state, obs, reward, done, info
+
+
+def env_step_paper(state, action, task_id, n_columns, threshold=250):
+    """Paper-compatible env step: no early score transition on action 31.
+
+    Every turn is exactly 3 steps (roll, roll, score) = 39 steps per game.
+    """
+    new_state, reward, done = jax.lax.cond(
+        state.phase == PHASE_ROLL,
+        lambda s, a, t: _roll_step_paper(s, a, n_columns),
+        lambda s, a, t: _score_step(s, a, t, n_columns, threshold),
+        state, action, task_id,
+    )
+    obs = make_obs_paper(new_state, n_columns)
     info = {"phase": new_state.phase}
     return new_state, obs, reward, done, info
