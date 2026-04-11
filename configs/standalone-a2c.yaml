@@ -25,7 +25,7 @@ a2c:
   upper_shaping_weight: 1.0    # ON — matches 1M config that got 241
 
 training:
-  n_games: 1000000         # 1M — matches the config that achieved 241.78
+  n_games: 1000000         # 1M — 50k updates (matches paper: 500 epochs × 100 batches/epoch)
   n_parallel_envs: 20
   lr: 0.0001
   lr_min_ratio: 0.05

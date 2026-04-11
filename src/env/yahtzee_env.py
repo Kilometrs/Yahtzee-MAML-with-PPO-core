@@ -119,9 +119,13 @@ def make_obs_paper(state, n_columns):
     upper_sum = jnp.sum(state.scores[:6, :]).astype(jnp.float32)
     bonus_progress = jnp.array([upper_sum / UPPER_BONUS_THRESHOLD])  # (1,)
 
-    # potential_scoring_opportunities: normalized scores + joker
+    # potential_scoring_opportunities: masked by available categories + joker
     all_scores = compute_all_scores(sorted_dice)
-    potential_normalized = all_scores.astype(jnp.float32) / MAX_CATEGORY_SCORES  # (13,)
+    # Paper: scores for filled categories are 0. For multi-col, a category
+    # is "available" if ANY column has it unfilled.
+    avail_any_col = jnp.any(~state.filled_mask, axis=1).astype(jnp.float32)  # (13,)
+    masked_scores = all_scores.astype(jnp.float32) * avail_any_col
+    potential_normalized = masked_scores / MAX_CATEGORY_SCORES  # (13,)
     all_dice_same = jnp.all(sorted_dice == sorted_dice[0])
     joker = jnp.array([all_dice_same & yahtzee_filled], dtype=jnp.float32)  # (1,)
 
