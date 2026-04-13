@@ -1,21 +1,26 @@
 env:
   n_columns: 6
   seed: 42
-  max_steps_per_episode: 250
+  max_steps_per_episode: 234
 
 agent:
-  hidden_dim: 256
-  n_layers: 3
+  hidden_dim: 600
+  n_layers: 2
+  use_layer_norm: true
+  activation: swish
+  dropout_rate: 0.1
+  head_hidden_dim: 600
 
 a2c:
-  entropy_coef: 0.01
-  value_loss_coef: 0.5
+  entropy_coef: 0.03
+  value_loss_coef: 0.25
   gae_lambda: 0.0
+  gamma: 1.0
 
 meta:
   inner_lr: 0.0007
-  outer_lr: 0.0003
-  n_inner_steps: 1
+  outer_lr: 0.0001
+  n_inner_steps: 3
   n_tasks_per_batch: 6
   n_meta_steps: 100000
   n_parallel_envs: 50
