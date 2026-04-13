@@ -28,3 +28,5 @@ venv/
 .claude/
 _dev_trash
 output/*
+docs/*
+runs/*
