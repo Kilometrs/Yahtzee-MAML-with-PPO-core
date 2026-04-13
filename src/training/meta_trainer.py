@@ -23,6 +23,8 @@ class MetaTrainer:
             n_columns=config["env"]["n_columns"],
             use_layer_norm=config["agent"].get("use_layer_norm", False),
             activation=config["agent"].get("activation", "relu"),
+            dropout_rate=config["agent"].get("dropout_rate", 0.0),
+            head_hidden_dim=config["agent"].get("head_hidden_dim", 0),
         )
         self.rng = jax.random.PRNGKey(config["env"]["seed"])
         self.rng, init_rng = jax.random.split(self.rng)
@@ -44,6 +46,10 @@ class MetaTrainer:
     def train(self, start_step=0):
         n_meta_steps = self.config["meta"]["n_meta_steps"]
         checkpoint_every = self.config["training"]["checkpoint_every"]
+        loss_csv = os.path.join(self.checkpoint_dir, "loss.csv")
+        if start_step == 0:
+            with open(loss_csv, "w") as f:
+                f.write("step,meta_loss," + ",".join(TASK_NAMES) + "\n")
         pbar = tqdm(range(start_step, n_meta_steps), initial=start_step, total=n_meta_steps)
         for step in pbar:
             result = self.fomaml.meta_update(self.meta_params, self.opt_state, self.rng)
@@ -56,6 +62,8 @@ class MetaTrainer:
                 self.logger.log_scalar("meta", "loss", meta_loss, step)
                 for i, tl in enumerate(task_losses):
                     self.logger.log_scalar("task_loss", TASK_NAMES[i], tl, step)
+                with open(loss_csv, "a") as f:
+                    f.write(f"{step},{meta_loss}," + ",".join(f"{tl}" for tl in task_losses) + "\n")
             if (step + 1) % checkpoint_every == 0:
                 self.save_checkpoint(step + 1)
             if self.eval_every and (step + 1) % self.eval_every == 0:
@@ -90,6 +98,7 @@ class MetaTrainer:
         for task_name in TASK_NAMES:
             task_mean = float(df_episodes[df_episodes["strategy"] == task_name]["final_score"].mean())
             self.logger.log_scalar("eval_per_task", task_name, task_mean, meta_step)
+        self.logger.flush_scalars()
         steps_path, episodes_path = self.evaluator.save_trajectories(
             df_steps, df_episodes, "all", meta_step, out_dir=self.checkpoint_dir)
         self.logger.log_artifact(f"eval_steps_step{meta_step}", steps_path)

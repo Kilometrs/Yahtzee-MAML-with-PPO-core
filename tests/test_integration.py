@@ -14,7 +14,7 @@ from src.env.constants import PHASE_ROLL, PHASE_SCORE, N_DICE, obs_dim as _obs_d
 
 
 SMALL_CONFIG = {
-    "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 100},
+    "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 117},
     "agent": {"hidden_dim": 32, "n_layers": 1, "use_layer_norm": False, "activation": "relu"},
     "ppo": {"clip_epsilon": 0.2, "entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.95, "gamma": 0.99},
     "meta": {"inner_lr": 0.001, "outer_lr": 0.0003, "n_inner_steps": 2,
@@ -25,7 +25,7 @@ SMALL_CONFIG = {
 }
 
 SMALL_A2C_CONFIG = {
-    "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 100},
+    "env": {"n_columns": 3, "seed": 42, "max_steps_per_episode": 117},
     "agent": {"hidden_dim": 32, "n_layers": 1, "use_layer_norm": True, "activation": "swish"},
     "a2c": {"entropy_coef": 0.01, "value_loss_coef": 0.5, "gae_lambda": 0.0, "gamma": 1.0},
     "meta": {"inner_lr": 0.001, "outer_lr": 0.0003, "n_inner_steps": 1,
@@ -142,7 +142,7 @@ class TestFullEpisodeViaEnv:
         steps = 0
         while not done and steps < 500:
             if int(state.phase) == PHASE_ROLL:
-                action = jnp.int32(31)
+                action = jnp.int32(0)  # reroll all — no early exit
             else:
                 mask = get_action_mask(state, n_cols)
                 action = jnp.int32(jnp.argmax(mask))

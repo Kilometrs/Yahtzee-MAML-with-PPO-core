@@ -10,7 +10,14 @@ from src.env.constants import (
 
 
 N_COLS = 6
-OBS_DIM = obs_dim(N_COLS)  # 239
+OBS_DIM = obs_dim(N_COLS)  # 255
+
+
+class TestObsDim:
+    def test_obs_dim_formula(self):
+        assert obs_dim(1) == 57 + 33 * 1
+        assert obs_dim(3) == 57 + 33 * 3
+        assert obs_dim(6) == 57 + 33 * 6
 
 
 class TestEnvReset:
@@ -94,6 +101,14 @@ class TestMakeObsFeatures:
         assert float(jnp.sum(rolls)) == 1.0
         assert float(rolls[MAX_REROLLS]) == 1.0
 
+    def test_potential_scores_section(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        obs = make_obs(state, N_COLS)
+        potential = obs[39:52]
+        assert potential.shape == (13,)
+        assert jnp.all(potential >= 0.0)
+
     def test_game_progress_starts_zero(self):
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
@@ -104,7 +119,7 @@ class TestMakeObsFeatures:
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
         obs = make_obs(state, N_COLS)
-        offset = 39 + 26 * N_COLS + 1
+        offset = 55 + 26 * N_COLS + 1
         upper_progress = obs[offset:offset + N_COLS]
         assert jnp.allclose(upper_progress, 0.0)
 
@@ -140,11 +155,12 @@ class TestEnvStep:
         assert int(new_state.rerolls) == MAX_REROLLS - 1
         assert int(new_state.phase) == PHASE_ROLL
 
-    def test_keep_all_transitions_to_score(self):
+    def test_keep_all_does_not_transition_to_score(self):
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
         new_state, obs, reward, done, info = env_step(state, jnp.int32(31), jnp.int32(0), N_COLS)
-        assert int(new_state.phase) == PHASE_SCORE
+        assert int(new_state.phase) == PHASE_ROLL
+        assert int(new_state.rerolls) == MAX_REROLLS - 1
 
     def test_exhaust_rerolls_transitions_to_score(self):
         rng = jax.random.PRNGKey(0)
@@ -157,7 +173,9 @@ class TestEnvStep:
     def test_score_step_fills_slot(self):
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
-        state, _, _, _, _ = env_step(state, jnp.int32(31), jnp.int32(0), N_COLS)
+        # exhaust rerolls to get to score phase
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
         assert int(state.phase) == PHASE_SCORE
         new_state, obs, reward, done, info = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
         assert bool(new_state.filled_mask[0, 0])
@@ -166,7 +184,10 @@ class TestEnvStep:
     def test_not_done_until_all_filled(self):
         rng = jax.random.PRNGKey(0)
         state, _ = env_reset(rng, N_COLS)
-        state, _, _, _, _ = env_step(state, jnp.int32(31), jnp.int32(0), N_COLS)
+        # exhaust rerolls to get to score phase
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        assert int(state.phase) == PHASE_SCORE
         _, _, _, done, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
         assert not bool(done)
 
@@ -192,17 +213,80 @@ class TestEnvStep:
         assert obs.shape == (4, OBS_DIM)
 
 
+class TestDiceSorting:
+    def test_reset_dice_sorted(self):
+        rng = jax.random.PRNGKey(42)
+        state, _ = env_reset(rng, N_COLS)
+        assert jnp.array_equal(state.dice, jnp.sort(state.dice))
+
+    def test_roll_step_dice_sorted(self):
+        rng = jax.random.PRNGKey(42)
+        state, _ = env_reset(rng, N_COLS)
+        new_state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        assert jnp.array_equal(new_state.dice, jnp.sort(new_state.dice))
+
+    def test_score_step_next_dice_sorted(self):
+        rng = jax.random.PRNGKey(42)
+        state, _ = env_reset(rng, N_COLS)
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        assert int(state.phase) == PHASE_SCORE
+        mask = get_action_mask(state, N_COLS)
+        action = jnp.int32(jnp.argmax(mask))
+        new_state, _, _, _, _ = env_step(state, action, jnp.int32(0), N_COLS)
+        assert jnp.array_equal(new_state.dice, jnp.sort(new_state.dice))
+
+
+class TestNoEarlyExit:
+    def test_keep_all_does_not_skip_to_score(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        assert int(state.rerolls) == MAX_REROLLS
+        new_state, _, _, _, _ = env_step(state, jnp.int32(31), jnp.int32(0), N_COLS)
+        assert int(new_state.phase) == PHASE_ROLL
+        assert int(new_state.rerolls) == MAX_REROLLS - 1
+
+    def test_episode_exactly_39_steps_1col(self):
+        n_cols = 1
+        rng = jax.random.PRNGKey(42)
+        state, _ = env_reset(rng, n_cols)
+        done = False
+        steps = 0
+        while not done and steps < 100:
+            if int(state.phase) == PHASE_ROLL:
+                action = jnp.int32(0)
+            else:
+                mask = get_action_mask(state, n_cols)
+                action = jnp.int32(jnp.argmax(mask))
+            state, _, _, done_flag, _ = env_step(state, action, jnp.int32(0), n_cols)
+            done = bool(done_flag)
+            steps += 1
+        assert done
+        assert steps == 39
+
+
+class TestStrategicCrossOuts:
+    def test_all_unfilled_categories_valid(self):
+        rng = jax.random.PRNGKey(0)
+        state, _ = env_reset(rng, N_COLS)
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        state, _, _, _, _ = env_step(state, jnp.int32(0), jnp.int32(0), N_COLS)
+        assert int(state.phase) == PHASE_SCORE
+        mask = get_action_mask(state, N_COLS)
+        assert jnp.sum(mask[:13 * N_COLS]) == 13 * N_COLS
+
+
 class TestFullEpisode:
     def test_play_full_episode_terminates(self):
         rng = jax.random.PRNGKey(42)
         state, _ = env_reset(rng, N_COLS)
         done = False
         steps = 0
-        max_steps = 300
+        max_steps = 500
 
         while not done and steps < max_steps:
             if int(state.phase) == PHASE_ROLL:
-                action = jnp.int32(31)
+                action = jnp.int32(0)
             else:
                 mask = get_action_mask(state, N_COLS)
                 action = jnp.int32(jnp.argmax(mask))

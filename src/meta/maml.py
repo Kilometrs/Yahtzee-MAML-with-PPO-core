@@ -1,9 +1,12 @@
 """FOMAML outer loop — meta-gradient aggregation and optimizer step."""
+import functools
+
 import jax
 import jax.numpy as jnp
 import optax
 
 from src.agents.a2c import a2c_loss
+from src.agents.entropy import anneal_entropy
 from src.agents.ppo import ppo_loss
 from src.meta.inner_loop import (
     collect_all_episodes, prepare_all_ppo_data, all_inner_updates,
@@ -36,6 +39,12 @@ class FOMAML:
         self.threshold = config["tasks"]["threshold_beater_score"]
         self.gamma = algo_config.get("gamma", 0.99)
         self.gae_lambda = algo_config.get("gae_lambda", 0.95)
+        self.entropy_coef_roll_range = algo_config.get("entropy_coef_roll", None)
+        self.entropy_coef_score_range = algo_config.get("entropy_coef_score", None)
+        self.entropy_hold = algo_config.get("entropy_hold", 0.075)
+        self.entropy_anneal_frac = algo_config.get("entropy_anneal", 0.9)
+        self.n_meta_steps = config["meta"]["n_meta_steps"]
+        self.upper_regression_weight = algo_config.get("upper_regression_weight", 0.0)
         self.optimizer = optax.adam(config["meta"]["outer_lr"])
 
         self._task_ids = jnp.arange(self.n_tasks, dtype=jnp.int32)
@@ -47,7 +56,7 @@ class FOMAML:
     def init_optimizer(self, params):
         return self.optimizer.init(params)
 
-    def meta_update(self, meta_params, opt_state, rng):
+    def meta_update(self, meta_params, opt_state, rng, meta_step=0):
         """One meta-step — fully batched over tasks.
 
         Returns (meta_params, opt_state, rng, meta_loss, per_task_losses, skipped).

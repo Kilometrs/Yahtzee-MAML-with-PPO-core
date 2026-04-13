@@ -33,7 +33,7 @@ def _build_batched_eval(model, n_columns, max_steps, threshold=250):
 
             mask = get_action_mask(state, n_columns)
             obs = make_obs(state, n_columns)
-            logits, value = model.apply(params, obs, state.phase)
+            logits, value, _ = model.apply(params, obs, state.phase)
             logits = jnp.where(mask, logits, -jnp.inf)
             probs = jax.nn.softmax(logits)
             action = jnp.argmax(logits)
@@ -114,6 +114,8 @@ class Evaluator:
             n_columns=self.n_columns,
             use_layer_norm=config["agent"].get("use_layer_norm", False),
             activation=config["agent"].get("activation", "relu"),
+            dropout_rate=config["agent"].get("dropout_rate", 0.0),
+            head_hidden_dim=config["agent"].get("head_hidden_dim", 0),
         )
         self.inner_lr = config["meta"]["inner_lr"]
         self.n_inner_steps = config["meta"]["n_inner_steps"]

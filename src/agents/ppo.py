@@ -8,7 +8,7 @@ from src.agents.common import compute_gae  # noqa: F401 — re-export for backwa
 def ppo_loss(params, model, obs, actions, phases, masks,
              old_log_probs, advantages, returns,
              clip_epsilon=0.2, entropy_coef=0.01, value_loss_coef=0.5):
-    logits, values = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs, phases)
+    logits, values, _ = jax.vmap(model.apply, in_axes=(None, 0, 0))(params, obs, phases)
     logits = jnp.where(masks, logits, -jnp.inf)
     log_probs = jax.nn.log_softmax(logits)
     action_log_probs = jnp.take_along_axis(log_probs, actions[:, None], axis=1).squeeze(1)
