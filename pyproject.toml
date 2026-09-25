@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Yahtzee FOMAML meta-learning"
 requires-python = ">=3.10"
 dependencies = [
-    "jax[cuda12]>=0.4.30",
+    "jax>=0.4.30",
     "jaxlib>=0.4.30",
     "flax>=0.8.0",
     "optax>=0.2.0",
@@ -16,6 +16,11 @@ dependencies = [
     "pyarrow>=15.0.0",
     "tqdm>=4.0",
     "tensorboard>=2.14.0",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "jax[cuda12]>=0.4.30",
 ]
 
 [dependency-groups]

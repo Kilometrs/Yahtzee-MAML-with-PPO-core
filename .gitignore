@@ -4,6 +4,9 @@ checkpoints/
 # Generated training/evaluation data
 data/
 
+# TensorBoard runs (CLEARML_OFF=1)
+runs/
+
 # Environment variables
 .env
 

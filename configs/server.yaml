@@ -62,7 +62,7 @@ training:
 
   # Number of episodes per opponent during eval. Higher = less noisy scores.
   n_eval_episodes: 200
-  checkpoint_dir: /mnt/checkpoints/
+  checkpoint_dir: checkpoints/
 
 clearml:
   project_name: yahtzee-maml-server

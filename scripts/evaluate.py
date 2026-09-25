@@ -1,9 +1,9 @@
 """Evaluation entry point.
 
 Usage:
-    python scripts/evaluate.py --checkpoint /mnt/checkpoints/step_5000 --config configs/default.yaml
-    python scripts/evaluate.py --checkpoint /mnt/checkpoints/step_5000 --n-episodes 200
-    python scripts/evaluate.py --checkpoint /mnt/checkpoints/step_5000 --task-name thesis-eval-run1
+    python scripts/evaluate.py --checkpoint checkpoints/<task_id>/step_5000 --config configs/default.yaml
+    python scripts/evaluate.py --checkpoint checkpoints/<task_id>/step_5000 --n-episodes 200
+    python scripts/evaluate.py --checkpoint checkpoints/<task_id>/step_5000 --task-name thesis-eval-run1
 """
 
 import argparse
@@ -42,7 +42,7 @@ def load_params(checkpoint_dir, model, config):
 def main():
     parser = argparse.ArgumentParser(description="Evaluate a trained FOMAML checkpoint")
     parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to checkpoint directory (e.g. /mnt/checkpoints/step_5000)")
+                        help="Path to checkpoint directory (e.g. checkpoints/<task_id>/step_5000)")
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--n-episodes", type=int, default=100)
     parser.add_argument("--task-name", type=str, default=None,

@@ -1,6 +1,7 @@
 env:
   n_columns: 3
   seed: 42
+  max_steps_per_episode: 117   # 3 cols × 13 turns × 3 steps
 
 agent:
   hidden_dim: 64
@@ -17,15 +18,14 @@ meta:
   n_inner_steps: 1
   n_tasks_per_batch: 2
   n_meta_steps: 10
-  n_workers: 2
+  n_parallel_envs: 4
 
 tasks:
   threshold_beater_score: 250
 
 training:
   checkpoint_every: 5
-  checkpoint_dir: /mnt/checkpoints/test/
-  device: cpu
+  checkpoint_dir: checkpoints/test/
 
 clearml:
   project_name: yahtzee-maml-test

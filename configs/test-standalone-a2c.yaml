@@ -1,0 +1,43 @@
+# Tiny smoke-test version of standalone-a2c.yaml (runs in ~a minute on CPU).
+env:
+  n_columns: 1
+  seed: 42
+  max_steps_per_episode: 39
+  use_paper_obs: true
+
+agent:
+  hidden_dim: 64
+  n_layers: 2
+  use_layer_norm: true
+  activation: swish
+  dropout_rate: 0.1
+  head_hidden_dim: 64
+  norm_position: post
+
+a2c:
+  gamma: 0.99
+  gae_lambda: 0.0
+  value_loss_coef: 0.005
+  entropy_coef_roll: [0.1, 0.02]
+  entropy_coef_score: [0.03, 0.01]
+  entropy_hold: 0.075
+  entropy_anneal: 0.9
+  upper_regression_weight: 1.0
+  upper_shaping_weight: 1.0
+
+training:
+  n_games: 200
+  n_parallel_envs: 20
+  lr: 0.0001
+  checkpoint_every: 5
+  eval_every: 5
+  n_eval_episodes: 20
+  checkpoint_dir: checkpoints/test/
+  log_every: 1
+
+tasks:
+  threshold_beater_score: 250
+
+clearml:
+  project_name: yahtzee-maml-test
+  task_name: integration-test-standalone-a2c

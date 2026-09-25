@@ -29,7 +29,7 @@ training:
   checkpoint_every: 500
   eval_every: 1000
   n_eval_episodes: 200
-  checkpoint_dir: /mnt/checkpoints-1col/
+  checkpoint_dir: checkpoints/1col/
 
 clearml:
   project_name: yahtzee-maml-server-1col

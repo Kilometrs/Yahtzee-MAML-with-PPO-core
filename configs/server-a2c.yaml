@@ -27,7 +27,7 @@ training:
   checkpoint_every: 500
   eval_every: 2500
   n_eval_episodes: 200
-  checkpoint_dir: /mnt/checkpoints/
+  checkpoint_dir: checkpoints/
 
 clearml:
   project_name: yahtzee-maml-server-a2c

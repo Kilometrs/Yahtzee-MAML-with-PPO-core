@@ -16,12 +16,12 @@ ENV UV_PYTHON=python3.10 \
 COPY pyproject.toml uv.lock ./
 
 # Install all runtime dependencies from the lockfile.
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --extra cuda
 
 # Copy source and install the project package.
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra cuda
 
 VOLUME ["/app/configs", "/app/checkpoints", "/app/data"]
 

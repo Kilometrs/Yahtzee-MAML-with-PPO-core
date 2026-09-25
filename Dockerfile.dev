@@ -1,22 +1,25 @@
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git python3.10 python3.10-venv && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
 
 # Install the venv at /opt/venv (outside /app).
 # /app is bind-mounted at runtime, so anything under /app is wiped on start.
 # /opt/venv survives the bind mount — packages are ready immediately, no downloads needed.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
-    PATH=/opt/venv/bin:/opt/conda/bin:$PATH
+    UV_PYTHON=python3.10 \
+    PATH=/opt/venv/bin:$PATH
 
 # Pre-install dependencies only (not the local project).
 # postCreateCommand installs the local editable package at runtime from the bind-mounted /app.
 COPY pyproject.toml uv.lock ./
-RUN uv venv /opt/venv --python /opt/conda/bin/python \
-    && uv sync --frozen --group dev --no-install-project
+RUN uv venv /opt/venv --python python3.10 \
+    && uv sync --frozen --group dev --extra cuda --no-install-project
 
 # Only site-packages needs to be writable by the remapped vscode UID at runtime.
 # updateRemoteUserUID remaps vscode's UID to match the host — chown-based ownership breaks,
